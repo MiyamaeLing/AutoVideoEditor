@@ -110,6 +110,10 @@ print('gui ok')
     import test_fixes
     test_fixes.run_all(check, out, fx)
 
+    # タイムライン表示と画面のデザイン（tests/test_timeline.py）
+    import test_timeline
+    test_timeline.run_all(check, out, fx)
+
     failed = [r for r in results if not r[1]]
     print(f"\n{len(results) - len(failed)}/{len(results)} 件 成功")
     sys.exit(1 if failed else 0)
