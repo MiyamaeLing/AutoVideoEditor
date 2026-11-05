@@ -1,0 +1,10 @@
+faster-whisper>=1.2.1
+anthropic>=2.5.0
+numpy
+Pillow
+PySide6>=6.6
+google-api-python-client
+google-auth-oauthlib
+# GPU (CUDA) で文字起こしするためのNVIDIAライブラリ（Windows / Linux）
+nvidia-cublas-cu12
+nvidia-cudnn-cu12==9.*

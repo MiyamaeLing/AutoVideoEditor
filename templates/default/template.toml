@@ -1,0 +1,120 @@
+# ===========================================================
+#  チャンネルの見た目テンプレート（初期版）
+#  刷新するときは、このファイルをコピーして別フォルダで作り、
+#  --template でそのフォルダを指定してください。
+#  見た目の確認:  python finish.py --template-preview --template templates/default
+# ===========================================================
+
+[video]
+width = 1920
+height = 1080
+fps = "auto"          # "auto" = 素材に合わせる / "30" "60" なども可
+encoder = "auto"      # auto / h264_nvenc / hevc_nvenc / av1_nvenc / libx264
+quality = 19          # 小さいほど高画質・大きいファイル（18〜23くらい）
+
+[audio]
+loudness = -14.0      # YouTubeの基準音量（LUFS）
+voice_volume_db = 0
+bgm_volume_db = -18   # BGMの基本音量
+bgm_duck = 8          # 喋っている間にBGMを下げる強さ（大きいほど下がる）
+se_volume_db = -6
+
+[fonts]
+dir = "fonts"         # ここに置いた .ttf / .otf も使えます
+
+# ---- 字幕（画面下） ----
+[caption]
+font = "BIZ UDPGothic"   # Windows 10/11 に標準で入っているフォント
+size = 66
+bold = true
+color = "#FFFFFF"
+outline_color = "#1A1A1A"
+outline = 6
+shadow = 0
+margin_bottom = 56
+max_chars = 24
+
+# ---- テロップ（強調など。AIが大事な所に付ける） ----
+[telop.emphasis]          # 大事なポイント（画面上部に大きく、ポンッと出る）
+font = "BIZ UDPGothic"
+size = 96
+bold = true
+color = "#FFE14D"
+outline_color = "#1A1A1A"
+outline = 9
+position = "top"          # top / middle / top-left
+animation = "pop"         # pop / fade / slide
+
+[telop.info]              # 補足情報（左上に帯で出る）
+font = "BIZ UDPGothic"
+size = 52
+bold = true
+color = "#FFFFFF"
+box_color = "#2B6CB0"
+position = "top-left"
+animation = "slide"
+
+[telop.warning]           # 注意（赤系）
+font = "BIZ UDPGothic"
+size = 80
+bold = true
+color = "#FFFFFF"
+outline_color = "#C53030"
+outline = 9
+position = "top"
+animation = "pop"
+
+[telop.funny]             # ツッコミ・面白い所
+font = "BIZ UDPGothic"
+size = 84
+bold = true
+color = "#FFFFFF"
+outline_color = "#D53F8C"
+outline = 9
+position = "top"
+animation = "pop"
+
+# ---- 章タイトルのカード（チャプターの頭に出る） ----
+[chapter_card]
+font = "BIZ UDPGothic"
+size = 88
+bold = true
+color = "#FFFFFF"
+box_color = "#1A1A1A"
+duration = 2.5
+
+# ---- ズーム（喋りの強調でグッと寄る） ----
+[zoom]
+small = 1.12
+medium = 1.22
+
+# ---- オープニング・エンディング・ロゴ（空なら使わない） ----
+[intro]
+file = ""                 # 例: "intro.mp4"（このフォルダからの相対パス）
+
+[outro]
+file = ""
+
+[logo]
+file = ""                 # 例: "logo.png"（背景透過PNG）
+position = "top-right"    # top-left / top-right / bottom-left / bottom-right
+width = 180
+opacity = 0.85
+
+# ---- BGM・効果音 ----
+[bgm]
+dir = "bgm"               # bgm/calm, bgm/upbeat, bgm/tension, bgm/emotional に曲を入れる
+
+[se]
+dir = "se"                # pop.wav / ding.wav / whoosh.wav / boing.wav
+
+# ---- サムネイル ----
+[thumbnail]
+# 文字に使うフォントファイル（.ttf / .otf / .ttc）。空なら fonts フォルダ → Windows標準の太字フォントの順に探します
+font_file = "C:/Windows/Fonts/BIZ-UDGothicB.ttc"
+font_index = 1              # .ttc の中の何番目のフォントか（BIZ-UDGothicB.ttc は 1 = BIZ UDPゴシック 太字）
+text_color = "#FFE14D"      # 文字の色
+outline_color = "#111111"   # 文字の縁取り（内側）
+outer_color = "#FFFFFF"     # 文字の縁取り（外側）
+accent_color = "#2B6CB0"    # 帯の色（「上に帯」のデザイン）
+layouts = ["bottom", "band", "side"]   # bottom=下に大きな文字 / band=上に帯 / side=横に文字

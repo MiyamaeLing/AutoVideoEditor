@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+# 実行時に作られるもの
+gui_error.log
+*_roughcut/
+templates/*/_preview_work/
+templates/*/template_preview.mp4
+templates/*/preview_*.png
+# 個人の素材（BGMなど権利のあるもの）は入れない
+templates/*/bgm/**/*.mp3
+templates/*/bgm/**/*.wav
+templates/*/bgm/**/*.m4a
