@@ -25,3 +25,6 @@ templates/*/generated/
 .installed_manifest.json
 _update_backup/
 _update_tmp/
+# 企画（preprod.py）と発言検索の索引（search.py）
+projects/
+search_index.sqlite*

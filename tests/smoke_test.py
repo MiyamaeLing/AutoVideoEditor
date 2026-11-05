@@ -129,19 +129,18 @@ print('gui ok')
     test_design.run_all(check, out, fx)
     import test_graphics   # オープニング・エンディング・テロップの種類・章の進み具合
     test_graphics.run_all(check, out, fx)
-    import test_integration   # 機能どうしの組み合わせ（統合）
-    test_integration.run_all(check, out, fx)
     import test_thumbspro   # 人物の切り抜きサムネイル・顔を見た候補選び
     test_thumbspro.run_all(check, out, fx)
-
-    # タイムライン表示と画面のデザイン（tests/test_timeline.py）
-    import test_timeline
+    import test_timeline   # タイムライン表示と画面のデザイン
     test_timeline.run_all(check, out, fx)
-    # 途中からの再開・まとめて処理・困ったときの情報・自動更新
-    import test_ops
+    import test_ops   # 途中からの再開・まとめて処理・困ったときの情報・自動更新
     test_ops.run_all(check, out, fx)
-    import test_analytics
+    import test_analytics   # 公開後の分析・コメント要約・告知文
     test_analytics.run_all(check, out, fx)
+    import test_preprod   # 企画・台本支援と全動画の発言検索
+    test_preprod.run_all(check, out, fx)
+    import test_integration   # 最後に、機能どうしの組み合わせ（統合）
+    test_integration.run_all(check, out, fx)
 
     failed = [r for r in results if not r[1]]
     print(f"\n{len(results) - len(failed)}/{len(results)} 件 成功")
