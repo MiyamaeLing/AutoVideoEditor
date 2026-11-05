@@ -169,3 +169,34 @@ box_color = "#1A1A1A"     # 文字の後ろの箱の色（"" にすると縁取�
 outline_color = "#1A1A1A"
 outline = 5
 margin = 48
+
+# ---- 縦型ショート（shorts.py / 画面の「ショートを作る」） ----
+[shorts]
+count = 3                   # 作る本数の上限（1〜3）
+min_sec = 30                # 1本の長さ（秒）
+max_sec = 60
+layout = "crop"             # crop=人の顔を追いかけて縦に切り抜く / blur=横長の映像を真ん中に置き、上下はぼかした映像
+zoom = 1.0                  # 1.0より大きくすると、さらに寄る（例: 1.2）
+follow_smooth = 0.7         # 追いかけるなめらかさ（秒。大きいほどゆっくり動く）
+follow_deadzone = 0.04      # この割合より小さい動きは追いかけない（画面がふらふらしないように）
+follow_max_speed = 0.35     # 1秒に動ける量の上限（素材の幅に対する割合）
+band = true                 # 上部のタイトル帯を出す
+band_height = 300
+band_color = "#111111"
+band_opacity = 0.88         # 帯の濃さ（0〜1）
+band_accent_color = "#FFE14D"   # 帯の下の線の色
+band_accent_height = 10     # 線の太さ（0で線なし）
+title_font = "BIZ UDPGothic"
+title_size = 100            # 長いタイトルは帯に収まるように自動で小さくなります
+title_color = "#FFFFFF"
+title_chars_per_line = 11   # タイトルを2行に分ける目安の文字数
+caption_font = "BIZ UDPGothic"
+caption_size = 84           # 字幕の大きさ（縦型なので本編より大きめ）
+caption_color = "#FFFFFF"
+caption_outline_color = "#111111"
+caption_outline = 9
+caption_margin_bottom = 560 # 字幕の位置（画面の下からの距離。大きいほど中央寄り）
+caption_line_chars = 11     # 字幕1行の文字数の目安（長い字幕は2行に分けます）
+telops = true               # 演出プランの強調テロップも入れる
+telop_size = 88
+hashtags = ["shorts"]       # 説明文の最後に付けるハッシュタグ（#shorts は必ず付きます）
