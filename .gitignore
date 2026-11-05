@@ -14,3 +14,6 @@ templates/*/bgm/**/*.wav
 templates/*/bgm/**/*.m4a
 tests/_fixtures/
 .claude/
+# 企画（preprod.py）と発言検索の索引（search.py）
+projects/
+search_index.sqlite*
