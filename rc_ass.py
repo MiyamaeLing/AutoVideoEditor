@@ -33,6 +33,18 @@ def _style(name, c: dict, align: int, margin_v: int, margin_lr: int = 60, box: b
             f"{align},{margin_lr},{margin_lr},{margin_v},1")
 
 
+def _color_tag(c: dict | None) -> str:
+    """{"color": "#RRGGBB", "outline_color": "#RRGGBB"} → その字幕だけ色を変える ASS のタグ"""
+    if not c:
+        return ""
+    tag = ""
+    for key, n in (("color", 1), ("outline_color", 3)):
+        if c.get(key):
+            h = c[key].lstrip("#").upper()
+            tag += f"\\{n}c&H{h[4:6]}{h[2:4]}{h[0:2]}&"
+    return "{" + tag + "}" if tag else ""
+
+
 def _anim(kind: str, dur_ms: int) -> str:
     if kind == "pop":
         return r"{\fscx40\fscy40\t(0,110,\fscx112\fscy112)\t(110,190,\fscx100\fscy100)\fad(0,160)}"
@@ -54,8 +66,8 @@ def build_ass(tpl: Template, w: int, h: int, captions, telops, chapters) -> str:
     styles.append(_style("Chapter", chap, 5, 0, box=True))
 
     ev = []
-    for s, e, text in captions:
-        ev.append(f"Dialogue: 0,{_t(s)},{_t(e)},Caption,,0,0,0,,{_esc(text)}")
+    for s, e, text, *spk in captions:   # 4つ目があれば、その字幕だけの色（話者ごとの色分け）
+        ev.append(f"Dialogue: 0,{_t(s)},{_t(e)},Caption,,0,0,0,,{_color_tag(spk[0]) if spk else ''}{_esc(text)}")
     for s, e, text, style in telops:
         c = tel.get(style, {})
         ev.append(f"Dialogue: 2,{_t(s)},{_t(e)},T_{style},,0,0,0,,"

@@ -63,6 +63,8 @@ def parse_args():
     ap.add_argument("--finish", action="store_true", help="荒編集のあと、続けて仕上げ（演出・書き出し）まで行う")
     ap.add_argument("--template", type=Path, default=Path(__file__).parent / "templates" / "default",
                     help="仕上げに使う見た目のテンプレートフォルダ")
+    ap.add_argument("--speakers", nargs="?", const="auto", metavar="人数",
+                    help="（実験的）発言ごとに話者を推定して、字幕を人ごとに色分けする。人数（2 など）か auto")
     return ap.parse_args()
 
 
@@ -103,6 +105,9 @@ def main():
     save_chunks(chunks, out / "chunks.json")
     by_id = {c.id: c for c in chunks}
     print(f"  {len(chunks)}チャンク")
+    if args.speakers:
+        import rc_speakers   # 話者の区別（実験的な機能）。結果は speakers.json
+        rc_speakers.detect(src, chunks, out, args.speakers)
 
     # ---- AIの判定 ----
     print("■ カットの判定")
@@ -196,6 +201,10 @@ def main():
             items.append((s, e, text))
             item_ids.append(c.id)
     caps = build_captions(items, args.caption_chars)
+    if (out / "speakers.json").exists():
+        import rc_speakers   # 話者名を字幕に入れる設定のときだけ、名前を付ける
+        caps = rc_speakers.label_srt(out, items, item_ids, args.caption_chars, caps, _template_or_none(args.template),
+                                     chunks)
     write_srt(out / f"{stem}_字幕.srt", caps)
 
     # ---- XML ----
@@ -263,6 +272,14 @@ def main():
     if args.finish:
         import finish
         finish.run(out, template=args.template, llm=args.llm, effort=args.effort)
+
+
+def _template_or_none(path: Path):
+    try:
+        from rc_template import Template
+        return Template(path) if (path / "template.toml").exists() else None
+    except (Exception, SystemExit):  # noqa: BLE001  見た目の設定が読めなくても荒編集は続ける
+        return None
 
 
 def write_youtube_md(path: Path, meta: dict, chapters: list[dict]):
