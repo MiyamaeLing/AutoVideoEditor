@@ -842,7 +842,7 @@ class YouTubeDialog(QDialog):
 
         self.notice = QLabel(self.meta.get("notice", ""))
         self.notice.setWordWrap(True)
-        self.notice.setStyleSheet("background: #FFF3C4; padding: 6px;")
+        self.notice.setStyleSheet("background: #FFF3C4; color: #1A202C; padding: 6px;")
         self.notice.setVisible(bool(self.meta.get("notice")))
         self.meta.pop("notice", None)
 
@@ -1021,6 +1021,8 @@ class YouTubeDialog(QDialog):
 #  確認・仕上げタブ
 # ============================================================
 class ReviewPage(QWidget):
+    loaded = Signal(object)   # 結果を読み込んだ（引数: 出力フォルダ）。拡張機能（タイムラインなど）が使う
+
     def __init__(self, win: "MainWindow"):
         super().__init__()
         self.win = win
@@ -1099,6 +1101,7 @@ class ReviewPage(QWidget):
         fr = QHBoxLayout()
         fr.addWidget(self.filter)
         fr.addWidget(legend, 1)
+        self.legend = legend
         cut_box = QWidget()
         cl = QVBoxLayout(cut_box)
         cl.setContentsMargins(0, 0, 0, 0)
@@ -1205,6 +1208,7 @@ class ReviewPage(QWidget):
         self._fill_cuts()
         self._fill_plan()
         self._update_buttons()
+        self.loaded.emit(out)
 
     def _compute_offsets(self):
         self.offsets = []
