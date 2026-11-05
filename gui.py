@@ -41,7 +41,8 @@ MODES = [
 LLMS = [("api", "Claude APIで自動"), ("manual", "claude.ai に貼り付けて使う（API料金なし）"), ("none", "AIを使わない")]
 TYPE_JA = {"retake": "言い直し", "mistake": "言い間違い", "filler": "フィラー", "offscript": "段取り・独り言",
            "other": "その他"}
-STYLE_JA = {"emphasis": "強調", "info": "補足", "warning": "注意", "funny": "ツッコミ"}
+STYLE_JA = {"emphasis": "強調", "info": "補足", "warning": "注意", "funny": "ツッコミ",
+            "bubble": "吹き出し", "spec": "スペック表", "compare": "比較表", "step": "STEPカード", "place": "場所カード"}
 SE_JA = {"none": "なし", "pop": "ポンッ", "ding": "チーン", "whoosh": "シュッ", "boing": "ボヨン"}
 MOOD_JA = {"calm": "落ち着いた", "upbeat": "明るい", "tension": "緊張感", "emotional": "しんみり", "none": "BGMなし"}
 

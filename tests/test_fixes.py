@@ -425,7 +425,8 @@ QMessageBox.warning = staticmethod(lambda *a, **k: shown.append(("warning", a[2]
 QMessageBox.information = staticmethod(lambda *a, **k: shown.append(("info", a[2] if len(a) > 2 else "")))
 QMessageBox.question = staticmethod(lambda *a, **k: QMessageBox.No)
 w = gui.MainWindow(); w.resize(1300, 860); w.show()
-res["menus_hidden"] = not w.tools_menu.menuAction().isVisible() and not w.help_menu.menuAction().isVisible()
+# 拡張（gui_ext_*.py）が項目を足したメニューは出す。何もないメニューだけ隠れていればよい
+res["menus_hidden"] = all(m.menuAction().isVisible() == bool(m.actions()) for m in (w.tools_menu, w.help_menu))
 out = Path(OUT)
 w.review.load(out)
 rv = w.review

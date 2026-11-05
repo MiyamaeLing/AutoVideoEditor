@@ -109,6 +109,8 @@ print('gui ok')
     # 追加・修正した機能のテスト（tests/test_*.py）
     import test_fixes
     test_fixes.run_all(check, out, fx)
+    import test_graphics   # オープニング・エンディング・テロップの種類・章の進み具合
+    test_graphics.run_all(check, out, fx)
 
     failed = [r for r in results if not r[1]]
     print(f"\n{len(results) - len(failed)}/{len(results)} 件 成功")

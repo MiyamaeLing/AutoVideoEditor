@@ -199,6 +199,9 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
 
     intro_p = tpl.path(tpl.get("intro", {}).get("file", ""))
     outro_p = tpl.path(tpl.get("outro", {}).get("file", ""))
+    if not preview:   # [opening] / [ending] が有効なら、テンプレートから自動で作ったものを使う
+        import rc_graphics
+        intro_p, outro_p = rc_graphics.auto_intro_outro(tpl, intro_p, outro_p)
     intro = clip_seg(intro_p, fps) if intro_p and not preview else None
     outro = clip_seg(outro_p, fps) if outro_p and not preview else None
     off = float(intro.frames / fps) if intro else 0.0
@@ -252,7 +255,8 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
     body = rc_render.render_body(all_segs, w, h, fps, work, inter_args)
     print("    音声のミックス（BGM・効果音・音量の調整）", flush=True)
     loud = rc_render.mix_audio(body, total, sections, se_events, tpl, work)
-    (work / "subs.ass").write_text(build_ass(tpl, w, h, caps, telops, chapters), encoding="utf-8")
+    progress = ([(c["t"] + off, c["title"]) for c in sess_chapters], off, off + body_dur)   # 章の進み具合
+    (work / "subs.ass").write_text(build_ass(tpl, w, h, caps, telops, chapters, progress), encoding="utf-8")
     logo = tpl.path(tpl.get("logo", {}).get("file", ""))
     stem = sess["stem"]
     out_path = out_dir / (f"{stem}_プレビュー.mp4" if preview else f"{stem}_完成.mp4")

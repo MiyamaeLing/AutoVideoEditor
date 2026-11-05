@@ -1,6 +1,7 @@
 """字幕・テロップ・章カードを ASS 字幕ファイル（アニメーション付き）として作る。"""
 from __future__ import annotations
 
+import rc_graphics
 from rc_template import Template, ass_color
 
 POS = {"top": 8, "middle": 5, "top-left": 7, "bottom": 2}
@@ -41,8 +42,12 @@ def _anim(kind: str, dur_ms: int) -> str:
     return r"{\fad(220,220)}"
 
 
-def build_ass(tpl: Template, w: int, h: int, captions, telops, chapters) -> str:
-    """captions: [(s, e, text)] / telops: [(s, e, text, style)] / chapters: [(t, title)] すべて完成動画の時刻"""
+def build_ass(tpl: Template, w: int, h: int, captions, telops, chapters, progress=None,
+              progress_force: bool = False) -> str:
+    """captions: [(s, e, text)] / telops: [(s, e, text, style)] / chapters: [(t, title)] すべて完成動画の時刻
+
+    progress: (全部の章 [(t, title)], 本編の開始, 本編の終了)。テンプレートの [progress] が有効なら、章の進み具合を出す
+    """
     cap = tpl["caption"]
     tel = tpl.get("telop", {})
     chap = tpl.get("chapter_card", {})
@@ -52,11 +57,14 @@ def build_ass(tpl: Template, w: int, h: int, captions, telops, chapters) -> str:
         box = "box_color" in c
         styles.append(_style(f"T_{name}", c, POS.get(c.get("position", "top"), 8), 70, 70, box=box))
     styles.append(_style("Chapter", chap, 5, 0, box=True))
+    styles.append(rc_graphics.card_style_line(tpl))   # 吹き出し・スペック表などのカード型テロップ用
 
     ev = []
     for s, e, text in captions:
         ev.append(f"Dialogue: 0,{_t(s)},{_t(e)},Caption,,0,0,0,,{_esc(text)}")
     for s, e, text, style in telops:
+        if style in rc_graphics.CARD_STYLES:
+            continue   # カード型は下で図形として描く
         c = tel.get(style, {})
         ev.append(f"Dialogue: 2,{_t(s)},{_t(e)},T_{style},,0,0,0,,"
                   f"{_anim(c.get('animation', 'pop'), int((e - s) * 1000))}{_esc(text)}")
@@ -64,6 +72,9 @@ def build_ass(tpl: Template, w: int, h: int, captions, telops, chapters) -> str:
     for t, title in chapters:
         ev.append(f"Dialogue: 3,{_t(t)},{_t(t + d)},Chapter,,0,0,0,,"
                   r"{\fad(250,300)\fscx92\fscy92\t(0,250,\fscx100\fscy100)}" + _esc(title))
+    ev += rc_graphics.card_events(tpl, w, h, telops)
+    if progress:
+        ev += rc_graphics.progress_events(tpl, w, h, *progress, force=progress_force)
 
     return "\n".join([
         "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {w}", f"PlayResY: {h}",
