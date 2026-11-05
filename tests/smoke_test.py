@@ -131,6 +131,8 @@ print('gui ok')
     test_graphics.run_all(check, out, fx)
     import test_integration   # 機能どうしの組み合わせ（統合）
     test_integration.run_all(check, out, fx)
+    import test_thumbspro   # 人物の切り抜きサムネイル・顔を見た候補選び
+    test_thumbspro.run_all(check, out, fx)
 
     failed = [r for r in results if not r[1]]
     print(f"\n{len(results) - len(failed)}/{len(results)} 件 成功")

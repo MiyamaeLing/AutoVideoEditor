@@ -369,3 +369,21 @@ size = 76
 sub_size = 40
 music = ""                # エンディングの曲（空なら無音）
 music_volume_db = -12
+
+# ---- サムネイルの追加デザイン（人物の切り抜き・顔で選ぶ・背景のバリエーション） ----
+[thumbnail.pro]
+person = true               # 人物を背景から切り抜いて大きく置き、白いフチを付けたデザイン（thumb_○_person.jpg）も作る
+                            #   顔が見つからない場面・OpenCV が入っていないPCでは、自動でほかのデザインだけになります
+face_pick = true            # 顔が大きく写っている・目が開いている・表情が豊かな場面を優先して選ぶ
+model = "auto"              # 切り抜きのデータ: auto=初回に自動ダウンロード（約6MB）/ off=使わない（顔の位置から推定）
+backgrounds = ["blur", "vivid", "burst"]   # 人物デザインの背景（案1・案2・案3の順に使う）
+                            #   blur=ぼかす / vivid=鮮やかにする / burst=集中線 / dark=暗くする / color=単色
+side = "auto"               # 人物を置く側: auto（映っていた側）/ left / right。文字は反対側に入ります
+person_height = 0.96        # 人物の大きさ（画面の高さに対する割合）
+max_zoom = 2.2              # 人物を拡大する上限（大きくしすぎてぼやけないように）
+outline = 12                # 白いフチの太さ（0 でフチなし）
+outline_color = "#FFFFFF"   # フチの色
+shadow = true               # 人物の後ろに影を付ける
+burst_color = ""            # 集中線・単色の背景の色（空なら上の accent_color）
+other_background = "none"   # ほかのデザイン（bottom/band/side）も、人物はそのままで背景だけ変える: none / blur / vivid / dark
+save_cutout = true          # 切り抜いた人物を透過PNG（cutout_○.png）でも保存する（Photoshop などで使えます）

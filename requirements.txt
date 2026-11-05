@@ -8,7 +8,8 @@ google-auth-oauthlib
 # GPU (CUDA) で文字起こしするためのNVIDIAライブラリ（Windows / Linux）
 nvidia-cublas-cu12
 nvidia-cudnn-cu12==9.*
-# 縦型ショートの顔検出（5.x には顔検出のデータが入っていないので 4 系を使う）
+# 顔の検出（縦型ショート・サムネイルの人物切り抜き）。画面なし版の OpenCV。
+# 5.x には顔検出のデータ（CascadeClassifier）が入っていないので 4 系を使う
 opencv-python-headless>=4.8,<5
 # Bロール（差し込み素材）に iPhone の写真（HEIC）を使うため
 pillow-heif
