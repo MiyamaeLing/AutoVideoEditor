@@ -14,3 +14,4 @@ templates/*/bgm/**/*.wav
 templates/*/bgm/**/*.m4a
 tests/_fixtures/
 .claude/
+*_mv/

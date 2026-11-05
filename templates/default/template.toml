@@ -118,3 +118,16 @@ outline_color = "#111111"   # 文字の縁取り（内側）
 outer_color = "#FFFFFF"     # 文字の縁取り（外側）
 accent_color = "#2B6CB0"    # 帯の色（「上に帯」のデザイン）
 layouts = ["bottom", "band", "side"]   # bottom=下に大きな文字 / band=上に帯 / side=横に文字
+
+# ---- MVモード（mv.py / 画面の「MV」タブ） ----
+[mv]
+width = 1920
+height = 1080
+fps = "auto"          # "auto" = 素材に合わせる / "24" "30" なども可
+fit = "cover"         # cover = 画面いっぱい（はみ出しは切る） / contain = 全体を入れる（黒帯）
+pace = "normal"       # カットの速さ: fast = 細かめ / normal = ふつう / slow = ゆったり
+markers = "beats"     # Premiereのマーカー: beats = 拍ごと / bars = 小節ごと / sections = 区間（サビなど）だけ
+fade_out = 1.0        # 曲の途中で終わるとき、最後をフェードアウトする秒数
+min_cut = 0.3         # これより短いカットは作らない（秒）
+ai_frames = 36        # AIで並べるとき、Claudeに見せる代表フレームの最大の数
+batch = 8             # 一度に書き出すカットの数（メモリが足りないときは小さく）
