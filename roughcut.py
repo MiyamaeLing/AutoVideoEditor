@@ -240,6 +240,7 @@ def main():
         "markers": [{"t": t, "name": n, "comment": c} for t, n, c in markers],
         "meta": meta,
         "chapters": chapters,   # 発言ID（id）と元素材の時刻（src）付き。カットを変えても同じ発言を指す
+        "silent_work": [[round(s, 3), round(e, 3)] for s, e in silent_work],   # 工作モードの無言の作業（早送りに使う）
     }
     (out / "session.json").write_text(json.dumps(session, ensure_ascii=False, indent=1), encoding="utf-8")
 

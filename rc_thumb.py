@@ -334,6 +334,8 @@ def generate(out_dir: Path, tpl: Template, llm: str = "api", effort: str = "medi
 
     src = SourceSet([probe(Path(p)) for p in sess["inputs"]])
     tl = Timeline(src, [tuple(k) for k in sess["keep"]], src.main.fps)
+    import rc_speedup
+    tl = rc_speedup.wrap(tl, plan)   # 早送りがあれば、完成動画の時刻で均等に候補を選ぶ
     tdir = out_dir / "thumbnails"
     work = tdir / "_candidates"
     print("■ サムネイル案")

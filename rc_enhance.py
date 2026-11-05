@@ -548,7 +548,9 @@ def detect_cmd(segs, w: int, h: int, fps: Fraction, out_name: str, pre_chain) ->
     cmd = ["ffmpeg", "-y", "-v", "error"]
     parts, maps = [], []
     for j, (i, s) in enumerate(targets):
-        dur = s.frames / fps + Fraction(1, 10)
+        # 早送りの区間（rc_speedup）は、素材を倍率ぶん長く読む（書き出しと同じ読み方）
+        speed = Fraction(getattr(s, "speed", 1.0) or 1.0).limit_denominator(1000)
+        dur = s.frames / fps * speed + Fraction(1, 10)
         cmd += ["-ss", f"{s.start:.4f}", "-t", f"{float(dur):.4f}", "-i", str(s.path)]
         # 書き出しと同じフレームを解析するため、フレーム数も同じところで切る
         parts.append(f"[{j}:v]{pre_chain(s)},{s.fx.detect(trf_name(out_name, i))}[d{j}]")

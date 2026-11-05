@@ -111,6 +111,8 @@ print('gui ok')
     test_fixes.run_all(check, out, fx)
     import test_enhance   # 声と映像の補正
     test_enhance.run_all(check, out, fx)
+    import test_speedup   # 工作の作業シーンの自動早送り
+    test_speedup.run_all(check, out, fx)
 
     failed = [r for r in results if not r[1]]
     print(f"\n{len(results) - len(failed)}/{len(results)} 件 成功")
