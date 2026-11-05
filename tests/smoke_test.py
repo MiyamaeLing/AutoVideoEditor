@@ -143,6 +143,8 @@ print('gui ok')
     test_integration.run_all(check, out, fx)
     import test_review_fixes   # 統合後の確認で見つかった問題の直し
     test_review_fixes.run_all(check, out, fx)
+    import test_claude_code   # サブスク（Claude Code）での連携と「AIへの指示」
+    test_claude_code.run_all(check, out, fx)
 
     failed = [r for r in results if not r[1]]
     print(f"\n{len(results) - len(failed)}/{len(results)} 件 成功")

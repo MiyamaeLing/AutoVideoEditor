@@ -96,7 +96,7 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, codes: list[str] | Non
         "チェックを入れてください（コマンドなら youtube.py に --localize）。")
     if claude and claude.usage["in"]:
         import rc_llm
-        log(f"  Claude API: 約${rc_llm.cost_usd(claude.usage):.2f}")
+        log(f"  Claude API: {rc_llm.cost_text(claude.usage)}")
     return []
 
 

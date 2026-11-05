@@ -229,7 +229,7 @@ def main(argv=None):
     rc_mv.log(f"  カットの一覧: {out / 'mv_plan.json'}")
     if usage and usage.get("in"):
         import rc_llm
-        rc_mv.log(f"  Claude API: 入力{usage['in']:,} / 出力{usage['out']:,}トークン（約${rc_llm.cost_usd(usage):.2f}）")
+        rc_mv.log(f"  Claude API: 入力{usage['in']:,} / 出力{usage['out']:,}トークン（{rc_llm.cost_text(usage)}）")
 
 
 def PACE(p: str) -> str:  # noqa: N802

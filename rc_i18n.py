@@ -690,7 +690,7 @@ def prepare_for_youtube(meta: dict, log=print) -> dict:
                          "先に translate.py で翻訳し直してください（ANTHROPIC_API_KEY が必要です）。")
     if claude.usage["in"]:   # 訳し直したときは料金も出す（まとめて処理の合計にも入る）
         import rc_llm
-        log(f"  Claude API: 約${rc_llm.cost_usd(claude.usage):.2f}")
+        log(f"  Claude API: {rc_llm.cost_text(claude.usage)}")
     return load_json(out_dir / TRANSLATIONS, {})
 
 

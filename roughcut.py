@@ -270,7 +270,7 @@ def main():
         print(f"  タイトル等のプロンプト: {out / 'prompt_youtube.md'}（返答を保存して --meta で指定）")
     if usage_total["in"]:
         print(f"  Claude API: 入力{usage_total['in']:,} / 出力{usage_total['out']:,}トークン"
-              f"（約${rc_llm.cost_usd(usage_total):.2f}）")
+              f"（{rc_llm.cost_text(usage_total)}）")
 
     if args.finish:
         import finish

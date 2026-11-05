@@ -107,7 +107,7 @@ def main():
             print(f"  [注意] Bロール入りのXMLを作れませんでした: {e}")
     print("■ Bロールの割り当て完了（「完成動画を書き出す」で動画に反映されます）")
     if usage["in"]:
-        print(f"  Claude API: 約${rc_llm.cost_usd(usage):.2f}")
+        print(f"  Claude API: {rc_llm.cost_text(usage)}")
 
 
 if __name__ == "__main__":

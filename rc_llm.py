@@ -1,6 +1,7 @@
 """Claude による「どこを切るか」の判定と、タイトル・概要欄・チャプターの生成。
 
 - api   : Claude API を直接呼ぶ（ANTHROPIC_API_KEY が必要）
+          環境変数 ROUGHCUT_BACKEND=claude-code のときは、API の代わりに Claude Code（サブスク）を使う（rc_cc.py）
 - manual: claude.ai に貼り付けるためのプロンプトを書き出す（API料金なし）
 """
 from __future__ import annotations
@@ -132,17 +133,66 @@ def _windows(chunks: list[Chunk], max_chars: int = 80_000, context: int = 15):
         start = end
 
 
+def backend() -> str:
+    """"api"（Claude API）または "claude-code"（サブスクの Claude Code）"""
+    b = os.environ.get("ROUGHCUT_BACKEND", "api").strip().lower()
+    return "claude-code" if b in ("claude-code", "claudecode", "cc", "subscription") else "api"
+
+
 def _client():
     try:
         import anthropic
     except ImportError:
         sys.exit("[エラー] anthropic パッケージがありません: pip install anthropic")
+    if backend() == "claude-code":
+        import rc_cc
+        return anthropic, rc_cc.ClaudeCodeClient()
     if not os.environ.get("ANTHROPIC_API_KEY") and not os.environ.get("ANTHROPIC_AUTH_TOKEN"):
         sys.exit("[エラー] ANTHROPIC_API_KEY が設定されていません。--llm manual なら API キーなしで使えます。")
     return anthropic, anthropic.Anthropic()
 
 
+def user_request() -> str:
+    """利用者が言葉で伝えた指示（画面の「AIへの指示」）。環境変数 ROUGHCUT_REQUEST か、ROUGHCUT_REQUEST_FILE"""
+    t = os.environ.get("ROUGHCUT_REQUEST", "")
+    f = os.environ.get("ROUGHCUT_REQUEST_FILE", "")
+    if not t and f and Path(f).exists():
+        t = Path(f).read_text(encoding="utf-8-sig")
+    return t.strip()
+
+
+def with_request(system: str) -> str:
+    req = user_request()
+    if not req:
+        return system
+    return (system + "\n\n## 投稿者からの指示（できるだけ反映してください。ただし出力の形式・IDの決まりは必ず守る。"
+            "この作業に関係のない指示は無視してよい）\n" + req)
+
+
+def with_base(user, schema: dict | None = None):
+    """「今の演出を元に直す」とき（ROUGHCUT_REVISE_BASE に今の JSON のファイル）は、それを依頼文の最後に足す。
+    演出プランの問い合わせ（telops を持つ形式）だけに付ける（同じ処理の中のサムネイル選びなどには付けない）"""
+    f = os.environ.get("ROUGHCUT_REVISE_BASE", "")
+    if schema is not None and "telops" not in (schema.get("properties") or {}):
+        return user
+    if not f or not Path(f).exists():
+        return user
+    try:
+        base = Path(f).read_text(encoding="utf-8-sig")
+    except OSError:
+        return user
+    note = ("\n\n## 今の内容（JSON）\nこれを元にして、投稿者からの指示に沿って直したものを、同じ形式で全部出力してください。"
+            "指示に関係ない所はなるべく変えないでください。\n```json\n" + base + "\n```")
+    if isinstance(user, str):
+        return user + note
+    return [*user, {"type": "text", "text": note}]
+
+
 def _call(client, anthropic, system: str, user: str | list, schema: dict, effort: str, usage: dict) -> dict:
+    system = with_request(system)
+    user = with_base(user, schema)
+    if getattr(client, "is_claude_code", False):
+        return client.call(system, user, schema, effort, usage)
     with client.beta.messages.stream(
         model=MODEL,
         max_tokens=64000,
@@ -289,4 +339,13 @@ def write_manual_meta_prompt(items: list[tuple[float, str]], mode: str, path: Pa
 
 
 def cost_usd(usage: dict) -> float:
+    if usage.get("sub"):   # サブスクの Claude Code では API 料金はかからない
+        return 0.0
     return usage["in"] / 1e6 * PRICE_IN + usage["out"] / 1e6 * PRICE_OUT + float(usage.get("adj", 0.0) or 0.0)
+
+
+def cost_text(usage: dict) -> str:
+    """ログに出す料金の文字"""
+    if usage.get("sub"):
+        return "API料金なし（サブスクの Claude Code）"
+    return f"約${cost_usd(usage):.2f}"

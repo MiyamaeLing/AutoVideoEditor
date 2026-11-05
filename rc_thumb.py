@@ -402,5 +402,5 @@ def generate(out_dir: Path, tpl: Template, llm: str = "api", effort: str = "medi
     print(f"  {len(outs)}枚のサムネイル案を作りました: {tdir}")
     if usage and usage["in"]:
         import rc_llm
-        print(f"  Claude API: 約${rc_llm.cost_usd(usage):.2f}")
+        print(f"  Claude API: {rc_llm.cost_text(usage)}")
     return outs

@@ -86,7 +86,7 @@ def cmd_new(a):
     print(f"  メモ用: {d / 'plan.md'}")
     if usage and usage["in"]:
         import rc_llm
-        print(f"  Claude API: 入力{usage['in']:,} / 出力{usage['out']:,}トークン（約${rc_llm.cost_usd(usage):.2f}）")
+        print(f"  Claude API: 入力{usage['in']:,} / 出力{usage['out']:,}トークン（{rc_llm.cost_text(usage)}）")
 
 
 def cmd_list(a):
@@ -148,7 +148,7 @@ def cmd_check(a):
     print(f"  結果: {out / 'preprod_check.md'}")
     if usage and usage["in"]:
         import rc_llm
-        print(f"  Claude API: 入力{usage['in']:,} / 出力{usage['out']:,}トークン（約${rc_llm.cost_usd(usage):.2f}）")
+        print(f"  Claude API: 入力{usage['in']:,} / 出力{usage['out']:,}トークン（{rc_llm.cost_text(usage)}）")
 
 
 def build_parser():

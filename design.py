@@ -131,7 +131,7 @@ def cmd_propose(a):
         print(f"        見本: {out / r['images']['grid']}")
     if usage["in"]:
         import rc_llm
-        print(f"  Claude API: 約${rc_llm.cost_usd(usage):.2f}")
+        print(f"  Claude API: {rc_llm.cost_text(usage)}")
 
 
 def cmd_save(a):

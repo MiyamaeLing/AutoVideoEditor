@@ -203,7 +203,7 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
     if plan_only:
         print(f"■ 演出プランを作りました: {out_dir / 'plan_used.json'}")
         if usage["in"]:
-            print(f"  Claude API: 約${rc_llm.cost_usd(usage):.2f}")
+            print(f"  Claude API: {rc_llm.cost_text(usage)}")
         return None
     print(f"  テロップ {len(plan['telops'])} / ズーム {len(plan['zooms'])} / BGM区間 {len(plan['bgm'])}")
     if plan.get("speedups"):
@@ -345,7 +345,7 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
     print(f"  演出プラン: {out_dir / 'plan_used.json'}（書き換えて --plan で指定すると書き出し直せます）")
     print(f"  所要時間: {fmt_ts(time.time() - t0)}")
     if usage["in"]:
-        print(f"  Claude API: 約${rc_llm.cost_usd(usage):.2f}")
+        print(f"  Claude API: {rc_llm.cost_text(usage)}")
     return out_path
 
 

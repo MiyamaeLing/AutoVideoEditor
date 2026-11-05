@@ -861,6 +861,6 @@ def generate(out_dir: Path, tpl: Template, llm: str = "api", effort: str = "medi
     print(f"  所要時間: {fmt_ts(time.time() - t0)}")
     if usage and usage.get("in"):
         import rc_llm
-        print(f"  Claude API: 約${rc_llm.cost_usd(usage):.2f}")
+        print(f"  Claude API: {rc_llm.cost_text(usage)}")
     return outs
 

@@ -809,7 +809,7 @@ def analyze_retention(out_dir: Path | None, video_id: str, llm: str = "api", eff
     print(f"  レポート: {wdir / 'report.md'}")
     if usage["in"]:
         import rc_llm
-        print(f"  Claude API: 約${rc_llm.cost_usd(usage):.2f}")
+        print(f"  Claude API: {rc_llm.cost_text(usage)}")
     return result
 
 
@@ -920,7 +920,7 @@ def build_trends(llm: str = "api", effort: str = "medium", answer: Path | None =
     print(f"  {insights_path()}")
     if usage["in"]:
         import rc_llm
-        print(f"  Claude API: 約${rc_llm.cost_usd(usage):.2f}")
+        print(f"  Claude API: {rc_llm.cost_text(usage)}")
     return trends
 
 
@@ -1103,7 +1103,7 @@ def analyze_comments(out_dir: Path | None, video_id: str, llm: str = "api", effo
     print(f"  {wdir / 'comments.md'}")
     if usage["in"]:
         import rc_llm
-        print(f"  Claude API: 約${rc_llm.cost_usd(usage):.2f}")
+        print(f"  Claude API: {rc_llm.cost_text(usage)}")
     return res
 
 
@@ -1322,7 +1322,7 @@ def make_promo(out_dir: Path, video_id: str = "", llm: str = "api", effort: str 
         print("  [お知らせ] 動画IDが分からないので、URL の所は「（動画のURL）」にしてあります。")
     if usage["in"]:
         import rc_llm
-        print(f"  Claude API: 約${rc_llm.cost_usd(usage):.2f}")
+        print(f"  Claude API: {rc_llm.cost_text(usage)}")
     return out
 
 

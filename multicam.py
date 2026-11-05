@@ -79,7 +79,7 @@ def main():
         print(f"  演出プランを更新しました: {', '.join(p.name for p in saved)}")
         print(f"  Premiere用XMLを更新しました（選んだ所だけ V2 の手元カメラが映ります）: {xml}")
         if usage["in"]:
-            print(f"  Claude API: 約${rc_llm.cost_usd(usage):.2f}")
+            print(f"  Claude API: {rc_llm.cost_text(usage)}")
 
     shots = rc_multicam.compute_shots(tl, angles, cam2, cfg["min_shot"])
     ed = rc_multicam.to_edit(tl, shots)

@@ -38,7 +38,18 @@ MODES = [
     ("craft", "工作", "喋りの間は詰めますが、無言の作業シーンは残して「早送り候補」の印を付けます。"),
     ("outdoor", "屋外企画", "自動ではカットしません。NG候補や見どころに印を付けるだけです（確認画面でカットできます）。"),
 ]
-LLMS = [("api", "Claude APIで自動"), ("manual", "claude.ai に貼り付けて使う（API料金なし）"), ("none", "AIを使わない")]
+LLMS = [("cc", "Claude で自動（サブスク・Claude Code）"), ("api", "Claude APIで自動（従量課金）"),
+        ("manual", "claude.ai に貼り付けて使う"), ("none", "AIを使わない")]
+# 「cc」は処理のうえでは "api" と同じ（--llm api）。違いは ROUGHCUT_BACKEND=claude-code が付くこと
+LLM_DATA = {"cc": "api"}
+
+# 言葉で伝えた指示（「AIへの指示」）と、直すときの元の内容。Runner.env と ManualDialog が使う
+AI_STATE = {"request": "", "base": None}
+
+
+def use_claude_code(settings: QSettings) -> bool:
+    return settings.value("backend", "api") == "claude-code"
+
 TYPE_JA = {"retake": "言い直し", "mistake": "言い間違い", "filler": "フィラー", "offscript": "段取り・独り言",
            "other": "その他"}
 STYLE_JA = {"emphasis": "強調", "info": "補足", "warning": "注意", "funny": "ツッコミ",
@@ -73,6 +84,9 @@ def open_path(p: Path):
 
 
 def has_api_key(settings: QSettings) -> bool:
+    """「Claude で自動」で使えるか（サブスクの Claude Code なら、キーは要らない）"""
+    if use_claude_code(settings):
+        return True
     return bool(settings.value("api_key", "") or os.environ.get("ANTHROPIC_API_KEY"))
 
 
@@ -81,6 +95,10 @@ GUI_HINTS = [
     ("ANTHROPIC_API_KEY", "「作成」タブの「APIキーを設定…」でキーを入れるか、AIの欄で「claude.ai に貼り付けて使う」"
                           "または「AIを使わない」を選んでから、もう一度押してください。"),
     ("pip install", "必要なライブラリが入っていません。setup.bat をもう一度実行してください。"),
+    ("Claude Code にログインしていません", "PowerShell で `claude` を起動してログインしたら、もう一度押してください。"
+                                       "AIの欄の「接続を確認」で確かめられます。"),
+    ("使用量の上限", "時間をおいて同じボタンを押せば、やり直せます（文字起こしはやり直しません）。急ぐときは AI の欄で"
+                  "「claude.ai に貼り付けて使う」も選べます。"),
     ("--video-id", "「YouTubeへ」画面の「動画ID」欄に YouTube Studio の動画IDを入れるか、"
                    "表示される一覧から動画を選んでください。"),
     ("Googleアカウントとの連携が必要", "「YouTubeへ」画面で「Googleアカウントと連携」を押してください。"),
@@ -159,9 +177,19 @@ class Runner(QWidget):
         e = QProcessEnvironment.systemEnvironment()
         e.insert("PYTHONIOENCODING", "utf-8")
         e.insert("PYTHONUNBUFFERED", "1")
-        key = self.settings.value("api_key", "")
-        if key:
-            e.insert("ANTHROPIC_API_KEY", key)
+        if use_claude_code(self.settings):
+            e.insert("ROUGHCUT_BACKEND", "claude-code")
+        else:
+            e.insert("ROUGHCUT_BACKEND", "api")
+            key = self.settings.value("api_key", "")
+            if key:
+                e.insert("ANTHROPIC_API_KEY", key)
+        for k in ("ROUGHCUT_REQUEST", "ROUGHCUT_REVISE_BASE"):
+            e.remove(k)
+        if AI_STATE["request"].strip():
+            e.insert("ROUGHCUT_REQUEST", AI_STATE["request"].strip())
+        if AI_STATE["base"]:
+            e.insert("ROUGHCUT_REVISE_BASE", str(AI_STATE["base"]))
         return e
 
     def start(self, script: str, args: list[str], title: str, on_done=None, handle_error=None) -> bool:
@@ -383,6 +411,14 @@ class ManualDialog(QDialog):
         self.resize(720, 560)
         self.skipped = False
         self.prompt = prompt_path.read_text(encoding="utf-8")
+        if AI_STATE["request"].strip():
+            self.prompt += ("\n\n## 投稿者からの指示（できるだけ反映してください。ただし出力の形式・IDの決まりは必ず守る）\n"
+                            + AI_STATE["request"].strip())
+        base = AI_STATE["base"]
+        if base and prompt_path.name.startswith("prompt_plan") and Path(base).exists():
+            self.prompt += ("\n\n## 今の内容（JSON）\nこれを元にして、指示に沿って直したものを同じ形式で全部出力してください。"
+                            "指示に関係ない所はなるべく変えないでください。\n```json\n"
+                            + Path(base).read_text(encoding="utf-8-sig") + "\n```")
         steps = QLabel(
             f"<b>手順</b><br>"
             f"① 「プロンプトをコピー」を押す<br>"
@@ -487,16 +523,32 @@ class CreatePage(QWidget):
         form = QFormLayout(g_opt)
         self.llm = QComboBox()
         for k, v in LLMS:
-            self.llm.addItem(v, k)
-        self.llm.setCurrentIndex(max(0, [k for k, _ in LLMS].index(st.value("llm", "api"))))
+            self.llm.addItem(v, LLM_DATA.get(k, k))
+            self.llm.setItemData(self.llm.count() - 1, k, Qt.UserRole + 1)
+        keys = [k for k, _ in LLMS]
+        choice = st.value("llm_choice", "") or ("cc" if st.value("backend", "") == "claude-code"
+                                                else st.value("llm", "cc"))
+        self.llm.setCurrentIndex(keys.index(choice) if choice in keys else 0)
         self.key_label = QLabel()
-        key_btn = QPushButton("APIキーを設定…")
-        key_btn.clicked.connect(self._set_key)
+        self.key_btn = QPushButton("APIキーを設定…")
+        self.key_btn.clicked.connect(self._set_key)
+        self.cc_btn = QPushButton("接続を確認")
+        self.cc_btn.setToolTip("Claude Code が入っていて、サブスクのアカウントでログインできているかを確かめます")
+        self.cc_btn.clicked.connect(self._check_cc)
         row = QHBoxLayout()
         row.addWidget(self.llm, 1)
         row.addWidget(self.key_label)
-        row.addWidget(key_btn)
+        row.addWidget(self.key_btn)
+        row.addWidget(self.cc_btn)
         form.addRow("AI", row)
+        self.llm.currentIndexChanged.connect(self._llm_changed)
+        self._llm_changed()
+
+        self.request = QPlainTextEdit(st.value("ai_request", ""))
+        self.request.setPlaceholderText("任意。AIに言葉で伝えたいこと（例: 工具の説明は全部残して／テンポ重視で短めに／"
+                                        "テロップは少なめで、ツッコミ多め）")
+        self.request.setMaximumHeight(56)
+        form.addRow("AIへの指示", self.request)
 
         self.template = QComboBox()
         tp_btn = QPushButton("見た目を確認")
@@ -578,10 +630,41 @@ class CreatePage(QWidget):
         i = self.template.findText(cur)
         self.template.setCurrentIndex(max(i, 0))
 
+    def llm_choice(self) -> str:
+        return self.llm.currentData(Qt.UserRole + 1) or self.llm.currentData()
+
+    def _llm_changed(self, *_):
+        c = self.llm_choice()
+        self.win.settings.setValue("backend", "claude-code" if c == "cc" else "api")
+        self.key_btn.setVisible(c == "api")
+        self.cc_btn.setVisible(c == "cc")
+        self.refresh_key()
+
     def refresh_key(self):
-        has = bool(self.win.settings.value("api_key", "") or os.environ.get("ANTHROPIC_API_KEY"))
-        self.key_label.setText("✔ キー設定済み" if has else "⚠ キー未設定")
+        if not hasattr(self, "key_label"):
+            return
+        c = self.llm_choice()
+        if c == "cc":
+            import rc_cc
+            has = rc_cc.available()
+            self.key_label.setText("✔ Claude Code あり" if has else "⚠ Claude Code が未インストール")
+        elif c == "api":
+            has = bool(self.win.settings.value("api_key", "") or os.environ.get("ANTHROPIC_API_KEY"))
+            self.key_label.setText("✔ キー設定済み" if has else "⚠ キー未設定")
+        else:
+            has = True
+            self.key_label.setText("")
         self.key_label.setStyleSheet("color: #2F855A;" if has else "color: #C05621;")
+
+    def _check_cc(self):
+        import rc_cc
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            text = rc_cc.check_text()
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.refresh_key()
+        QMessageBox.information(self, "Claude Code の確認", text)
 
     def _set_key(self):
         key, ok = QInputDialog.getText(self, "Claude APIキー",
@@ -599,6 +682,8 @@ class CreatePage(QWidget):
         st = self.win.settings
         st.setValue("mode", self.mode())
         st.setValue("llm", self.llm.currentData())
+        st.setValue("llm_choice", self.llm_choice())
+        st.setValue("ai_request", self.request.toPlainText())
         st.setValue("template", self.template.currentText())
         st.setValue("glossary", self.glossary.text())
         st.setValue("effort", self.effort.currentData())
@@ -628,6 +713,8 @@ class CreatePage(QWidget):
         if not self.win.check_api_key(llm):
             return
         self.save_settings()
+        AI_STATE["request"] = self.request.toPlainText()
+        AI_STATE["base"] = None
         out = self.out_dir()
         out.mkdir(parents=True, exist_ok=True)
         args = [*map(str, self.files.paths()), "--mode", self.mode(), "--out", str(out),
@@ -1197,6 +1284,22 @@ class ReviewPage(QWidget):
         for b in (self.b_plan, self.b_prev, self.b_final, self.b_play, self.b_thumb, self.b_yt):
             bl.addWidget(b)
 
+        # 言葉で指示して、AIにやり直してもらう
+        self.ask = QLineEdit()
+        self.ask.setPlaceholderText("AIへの指示（例: 3分あたりの工具の説明は残して／テロップをもっと派手に、ツッコミ多めで）")
+        self.ask.setClearButtonEnabled(True)
+        self.b_redo_cut = QPushButton("この指示でカットをやり直す")
+        self.b_redo_cut.setToolTip("文字起こしはそのままで、AIにカットの判定をやり直してもらいます")
+        self.b_redo_cut.clicked.connect(self.redo_cuts)
+        self.b_redo_plan = QPushButton("この指示で演出を直す")
+        self.b_redo_plan.setToolTip("今の演出プラン（手直しを含む）を元に、指示に沿ってAIに直してもらいます")
+        self.b_redo_plan.clicked.connect(self.redo_plan)
+        ask_row = QHBoxLayout()
+        ask_row.addWidget(QLabel("AIへの指示"))
+        ask_row.addWidget(self.ask, 1)
+        ask_row.addWidget(self.b_redo_cut)
+        ask_row.addWidget(self.b_redo_plan)
+
         # 拡張機能（gui_ext_*.py）が「確認・仕上げ」タブにボタンを追加する場所
         self.ext_bar = QHBoxLayout()
         self.ext_bar.addStretch()
@@ -1204,6 +1307,7 @@ class ReviewPage(QWidget):
         lay = QVBoxLayout(self)
         lay.addLayout(top)
         lay.addWidget(split, 1)
+        lay.addLayout(ask_row)
         lay.addLayout(self.ext_bar)
         lay.addLayout(bl)
         self._update_buttons()
@@ -1448,6 +1552,60 @@ class ReviewPage(QWidget):
                     then()
         self.win.runner.start("roughcut.py", args, "カットの変更を反映中", done)
 
+    # ---------- 言葉で指示してやり直す ----------
+    def _set_request(self) -> str:
+        """作成タブの「AIへの指示」と、ここの指示を合わせて、これからの処理に使う"""
+        ask = self.ask.text().strip()
+        AI_STATE["request"] = "\n".join(t for t in (self.win.create.request.toPlainText().strip(), ask) if t)
+        return ask
+
+    def redo_cuts(self):
+        if not self.out:
+            return
+        llm = self.win.create.llm.currentData()
+        if llm == "none":
+            QMessageBox.information(self, "AIを使わない設定です", "「作成」タブの AI の欄で、Claude を使う方法を選んでください。")
+            return
+        if not self.win.check_api_key(llm):
+            return
+        if not self._set_request():
+            QMessageBox.information(self, "指示が空です", "「AIへの指示」に、どう直してほしいかを書いてください。")
+            return
+        if QMessageBox.question(self, "カットをやり直す",
+                                "AIにカットの判定をやり直してもらいます（文字起こしはそのまま使います）。\n"
+                                "表で手直ししたカットは、新しい判定に置き換わります。続けますか？") != QMessageBox.Yes:
+            return
+        self._save_plan_edits()
+        a = self.sess.get("args", {})
+        args = [*self.sess["inputs"], "--mode", self.sess["mode"], "--out", str(self.out),
+                "--effort", self.win.create.effort.currentData(), "--caption-chars", str(a.get("caption_chars", 24))]
+        if a.get("cam2"):
+            args += ["--cam2", *a["cam2"]]
+        if a.get("glossary"):
+            args += ["--glossary", a["glossary"]]
+        if a.get("whisper_model"):
+            args += ["--whisper-model", a["whisper_model"]]
+        AI_STATE["base"] = None
+        self.win.run_roughcut(self.out, args, llm, then_finish=False, template=self._template())
+
+    def redo_plan(self):
+        if not self.out or not (self.out / "plan_used.json").exists():
+            return
+        llm = self.win.create.llm.currentData()
+        if llm == "none" or not self.win.check_api_key(llm):
+            return
+        if not self._set_request():
+            QMessageBox.information(self, "指示が空です", "「AIへの指示」に、どう直してほしいかを書いてください。")
+            return
+        if self._dirty():
+            self.apply_cuts(then=self.redo_plan)
+            return
+        base = self._save_plan_edits() or (self.out / "plan_used.json")
+        keep = self.out / "plan_revise_base.json"   # 作り直すと plan_used.json が変わるので、写しを使う
+        keep.write_text(base.read_text(encoding="utf-8-sig"), encoding="utf-8")
+        AI_STATE["base"] = keep
+        self.make_plan()
+
     def _dirty(self) -> bool:
         return self.b_apply.text().endswith("●")
 
@@ -1470,6 +1628,8 @@ class ReviewPage(QWidget):
         out = self.out   # 処理を始めたときの結果（終わったときに別の結果が開かれていても、こちらに向ける）
 
         def done(ok):
+            if not ok or llm != "manual":
+                AI_STATE["base"] = None   # 直すときの元の内容は、この1回だけ使う
             if not ok:
                 return
             if self.out != out:
@@ -1489,6 +1649,7 @@ class ReviewPage(QWidget):
 
     def _manual_plan(self, then=None):
         dlg = ManualDialog(self, self.out / "prompt_plan.md", "演出プランを作る")
+        AI_STATE["base"] = None
         if dlg.exec():
             p = self.out / "claude_plan.json"
             p.write_text(dlg.text(), encoding="utf-8")
@@ -1681,7 +1842,7 @@ class ReviewPage(QWidget):
     def _update_buttons(self):
         if self.win.runner.busy:   # 処理中は押せないようにする（押せない理由が見て分かるように）
             for b in (self.b_apply, self.b_xml, self.b_plan, self.b_prev, self.b_final, self.b_play, self.b_thumb,
-                      self.b_yt, self.b_other):
+                      self.b_yt, self.b_other, self.b_redo_cut, self.b_redo_plan):
                 b.setEnabled(False)
             return
         self.b_other.setEnabled(True)
@@ -1689,6 +1850,9 @@ class ReviewPage(QWidget):
         has_plan = has and (self.out / "plan_used.json").exists()
         for b in (self.b_apply, self.b_xml, self.b_plan):
             b.setEnabled(has)
+        ai = self.win.create.llm.currentData() != "none"
+        self.b_redo_cut.setEnabled(has and ai)
+        self.b_redo_plan.setEnabled(has_plan and ai)
         self.b_prev.setEnabled(has_plan)
         self.b_final.setEnabled(has_plan)
         fp = self._final_path()
@@ -1745,6 +1909,13 @@ class MainWindow(QMainWindow):
         api_only: Claude API でしか動かない機能のときは、その代わりの方法（なければ空）を書く。
         AIの欄を変えても変わらない機能で、「AIの欄で選んでください」と案内しないように。
         """
+        if llm == "api" and use_claude_code(self.settings):
+            import rc_cc
+            if not rc_cc.available():
+                QMessageBox.information(self, "Claude Code が見つかりません", rc_cc.INSTALL_HINT
+                                        + "\n\nインストールしたら、ツールを起動し直してください。")
+                return False
+            return True
         if llm == "api" and not has_api_key(self.settings):
             if api_only:
                 QMessageBox.information(self, "APIキーが未設定です",
