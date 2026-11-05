@@ -16,7 +16,10 @@ import sys
 from pathlib import Path
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload",
-          "https://www.googleapis.com/auth/youtube.force-ssl"]
+          "https://www.googleapis.com/auth/youtube.force-ssl",
+          # 公開後の分析（視聴維持率）用。前からの連携には入っていないので、分析タブで連携し直してもらう
+          "https://www.googleapis.com/auth/yt-analytics.readonly"]
+YOUTUBE_SCOPES = SCOPES[:2]   # アップロード・設定に必要な許可（分析の許可がなくても動く）
 CATEGORIES = {"28": "科学と技術", "26": "ハウツーとスタイル", "22": "ブログ", "19": "旅行とイベント",
               "24": "エンターテイメント", "27": "教育", "10": "音楽", "2": "自動車と乗り物"}
 MODE_CATEGORY = {"talk": "28", "craft": "26", "outdoor": "19"}
@@ -213,7 +216,12 @@ def get_service(interactive: bool = True):
     creds = None
     tp = token_path()
     if tp.exists():
-        creds = Credentials.from_authorized_user_file(str(tp), SCOPES)
+        # 保存した許可の範囲のまま使う。後から SCOPES に足した許可（公開後の分析）がない連携でも、
+        # 今までどおりアップロードできるように（足した許可を求めると、更新のときに断られるため）。
+        # 分析の許可は「分析」タブで連携し直したときに付く（rc_analytics.relink）
+        creds = Credentials.from_authorized_user_file(str(tp))
+        if creds.scopes and not set(YOUTUBE_SCOPES) <= set(creds.scopes):
+            creds = None   # YouTube の許可が足りない古い連携 → もう一度ログイン
     if creds and creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())

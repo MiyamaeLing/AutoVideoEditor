@@ -878,6 +878,51 @@ python batch.py retry <id>       # もう一度（--from-start で荒編集か�
 - git で管理しているフォルダ（`git clone` したもの）は自動更新しません。`git pull` で更新してください
 - コマンドでも使えます：`python update.py --check`（確認だけ）/ `python update.py`（更新）/ `python update.py --zip ダウンロードしたzip`（ネットにつながらないPCで）
 
+### 公開後の分析（視聴維持率・コメント・告知文）
+YouTube に公開した動画の「どこで見るのをやめた人が多かったか」を調べて、次の動画の編集に生かします。画面の **「分析」タブ**（または「確認・仕上げ」タブの「公開後の分析」ボタン）で使います。
+
+**最初の1回だけの準備**
+1. [Google Cloud Console](https://console.cloud.google.com/) の「APIとサービス」→「ライブラリ」で **YouTube Analytics API** を検索して「有効にする」（YouTube Data API v3 と同じプロジェクトで）
+2. 「分析」タブの **「Googleと連携し直す」** を押して、ブラウザで**すべての項目を許可**します（視聴維持率を読む許可 `yt-analytics.readonly` が増えたため。前から連携している人も1回だけ必要です）
+   - 「YouTubeへ」画面の連携の準備（client_secret.json）がまだの人は、先に「5-3. YouTubeへの投稿」の準備をしてください
+
+**① 視聴維持率**：「視聴維持率を分析」を押すと、YouTube から「動画のどの時刻に、何%の人がまだ見ていたか」を取り出します
+- いつもより大きく視聴者が減った場面（最大5か所）と、巻き戻して見返された場面を自動で見つけて、グラフに番号を付けます
+- その場面の**元の発言・テロップ・章・画面**（完成動画から取り出した静止画）をそろえて、Claude が「考えられる原因」と「次の改善案」を書きます
+- 結果は `analytics\report.md`（グラフ・場面の画像つき）にも保存されます
+- 公開してから2〜3日たって、ある程度見られてからでないとデータが出ません（非公開・限定公開の動画も出ません）
+- 動画IDは「YouTubeへ」で設定した動画を自動で使います。違う動画を分析したいときは「動画ID」欄に入れてください
+
+**④ チャンネルの傾向**：分析した動画の結果は、チャンネル全体の `channel_insights.json`（`%APPDATA%\ai-roughcut\`）にたまっていきます
+- 「傾向をまとめ直す」で、何本もの動画でくり返し起きていることを Claude がまとめます
+- **「この傾向を、次の荒編集（カット判定）と演出プランの AI に伝える」** にチェックが入っていると、次からのカット判定・演出プランの AI への指示に「このチャンネルの過去の動画の分析から（参考）」として足されます（ジャンルごとに使い分けます。チェックを外すと今までどおり）
+
+**② コメント**：「コメントを要約して返信案を作る」で、好評・要望・質問・不満の要約と、返信した方がよいコメントへの返信案を作ります
+- 返信案は表でダブルクリックして直せます。「選んだ返信をコピー」で Studio に貼るか、「選んだ返信を投稿…」で確認してから投稿できます（勝手に投稿することはありません）
+- 宣伝・荒らしなど、返信しない方がよいコメントも教えてくれます
+- ほかの人のコメントのデータは、YouTube の規約に合わせて**30日たつと自動で消します**
+
+**③ 告知文**：「告知文を作る」で、X（旧Twitter）の投稿案3つ・Instagram の投稿文とハッシュタグ・ショート動画のタイトルと説明文（見どころ★ごと、本編へのリンクと #Shorts つき）を作ります。X は日本語140字（URL込み）を超えると赤字で知らせます
+
+**⑤ API審査の申請**：「APIで動画ごとアップロード」を使えるようにする Google の審査（audit）の申請手順と、申請フォームに書く文の下書き（英語の文例つき）を [`docs/youtube_audit_draft.md`](docs/youtube_audit_draft.md) にまとめました。審査をしなくても、今までの「Studio にアップ → 設定を反映」の流れは使えます
+
+AIの欄が「claude.ai に貼り付けて使う」なら貼り付け画面が出ます（API料金なし）。「AIを使わない」なら、数字だけのレポートと決まった形の告知文を作ります。
+
+コマンドで使う場合：
+```powershell
+python analytics.py --login                                  # 分析の許可も含めて連携し直す（最初の1回）
+python analytics.py "D:\撮影\レビュー_roughcut" --retention    # 視聴維持率の分析
+python analytics.py "D:\撮影\レビュー_roughcut" --comments     # コメントの要約と返信案
+python analytics.py "D:\撮影\レビュー_roughcut" --promo        # 告知文
+python analytics.py "D:\撮影\レビュー_roughcut" --all          # 3つまとめて
+python analytics.py --retention --video-id XXXXXXXXXXX       # このツールで作っていない動画も（発言との対応はなし）
+python analytics.py --trends                                 # チャンネルの傾向をまとめ直す
+python analytics.py --use-in-prompts off                     # 傾向を次のAIに伝えない
+python analytics.py --status                                 # 連携の状態と、次のAIに足す指示を表示
+python analytics.py --purge                                  # 保存した分析データを消す
+```
+作られるファイル（`素材名_roughcut\analytics` フォルダ）：`report.md`・`retention.png`・`frames\`（視聴維持率）、`comments.md`（コメント）、`promo.md`（告知文）、それぞれの `.json`
+
 ---
 
 ## 出力されるファイル（`素材名_roughcut` フォルダ）

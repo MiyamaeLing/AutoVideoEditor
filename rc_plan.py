@@ -62,7 +62,7 @@ PLAN_SCHEMA = {
 def _instructions(mode: str, available_moods: list[str]) -> str:
     moods = "、".join(available_moods) if available_moods else "（BGMは未登録なので bgm は空でよい）"
     return f"""あなたはYouTube動画の編集者です。カット済みの動画の文字起こしを読んで、仕上げの演出プランを作ってください。
-{MODE_PLAN_HINT[mode]}
+{MODE_PLAN_HINT[mode]}{rc_llm.channel_notes("plan", mode)}
 
 ## 入力の形式
 `#ID [編集後の時刻] テキスト`（字幕はすべての発言に自動で付くので、テロップは字幕とは別の「強調」です）

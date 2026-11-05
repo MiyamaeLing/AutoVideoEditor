@@ -269,9 +269,67 @@ def t_craft_all(check, fx: Path):
     check("組み合わせ: 早送りのあとの字幕の時刻", abs(got - want) < 0.02, f"{got} / 期待 {want:.3f}")
 
 
+# ---------------------------------------------------------------- YouTube連携の許可（スコープ）
+YT_CODE = r'''
+import json, os, sys, datetime
+sys.path.insert(0, ROOT)
+import rc_youtube as Y
+from google.oauth2.credentials import Credentials
+seen = []
+def fake_refresh(self, request):
+    seen.append(list(self._scopes or []))
+    self.token = "new-token"
+    self.expiry = datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+Credentials.refresh = fake_refresh
+res = {}
+tp = Y.token_path()
+tp.parent.mkdir(parents=True, exist_ok=True)
+old = {"token": "t", "refresh_token": "r", "client_id": "c", "client_secret": "s",
+       "token_uri": "https://oauth2.googleapis.com/token", "scopes": Y.SCOPES[:2],
+       "expiry": "2020-01-01T00:00:00Z"}
+tp.write_text(json.dumps(old), encoding="utf-8")
+yt = Y.get_service(interactive=False)
+res["old_ok"] = yt is not None and bool(seen) and all("yt-analytics" not in x for x in seen[-1])
+import rc_analytics
+res["analytics_state"] = rc_analytics.link_state()
+tp.write_text(json.dumps({**old, "scopes": Y.SCOPES[:1]}), encoding="utf-8")
+try:
+    Y.get_service(interactive=False)
+    res["too_old"] = "通った"
+except SystemExit as e:
+    res["too_old"] = str(e)
+print("RESULT:" + json.dumps(res, ensure_ascii=False))
+'''
+
+
+def t_youtube_scopes(check, fx: Path):
+    """分析（analytics）で許可を足しても、前からの連携（YouTube の許可だけ）でアップロードできる"""
+    import rc_youtube
+    d = fx / "integration" / "appdata"
+    if d.exists():
+        shutil.rmtree(d)
+    d.mkdir(parents=True)
+    check("組み合わせ: YouTube連携の許可に分析が足されている",
+          rc_youtube.SCOPES[:2] == ["https://www.googleapis.com/auth/youtube.upload",
+                                    "https://www.googleapis.com/auth/youtube.force-ssl"]
+          and "https://www.googleapis.com/auth/yt-analytics.readonly" in rc_youtube.SCOPES)
+    code = YT_CODE.replace("ROOT", repr(str(ROOT)), 1)
+    p = subprocess.run([PY, "-c", code], cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       env=dict(os.environ, APPDATA=str(d), PYTHONIOENCODING="utf-8"), timeout=120)
+    line = next((x for x in p.stdout.splitlines() if x.startswith("RESULT:")), None)
+    if not line:
+        check("組み合わせ: 前からのYouTube連携のまま使える", False, p.stderr[-800:])
+        return
+    r = json.loads(line[7:])
+    check("組み合わせ: 前からのYouTube連携のまま使える（分析の許可を求めない）", r["old_ok"], str(r))
+    check("組み合わせ: 分析タブは「連携し直し」を案内する", r["analytics_state"] == "old", str(r))
+    check("組み合わせ: YouTubeの許可が足りない連携は、もう一度ログインを求める", "連携が必要" in r["too_old"], str(r))
+
+
 def run_all(check, out: Path | None, fx: Path):
     t_units(check)
     t_template(check)
+    t_youtube_scopes(check, fx)
     t_render_graph(check, fx)
     t_craft_all(check, fx)
 

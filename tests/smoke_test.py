@@ -140,6 +140,8 @@ print('gui ok')
     # 途中からの再開・まとめて処理・困ったときの情報・自動更新
     import test_ops
     test_ops.run_all(check, out, fx)
+    import test_analytics
+    test_analytics.run_all(check, out, fx)
 
     failed = [r for r in results if not r[1]]
     print(f"\n{len(results) - len(failed)}/{len(results)} 件 成功")
