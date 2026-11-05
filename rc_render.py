@@ -28,6 +28,8 @@ class Seg:
     frames: int      # 出力フレーム数
     zoom: float = 1.0
     has_audio: bool = True
+    speed: float = 1.0   # 早送りの倍率（frames は早送りしたあとのフレーム数）
+    gain_db: float = 0.0
 
 
 def run(cmd: list[str], cwd: Path | None = None, what: str = "") -> subprocess.CompletedProcess:
@@ -101,22 +103,37 @@ def pick_encoder(pref: str, quality: int) -> tuple[list[str], list[str], str]:
 
 # ---------- 1. 本編 ----------
 
+def _tempo(speed: float, gain_db: float = 0.0) -> str:
+    """早送りの音（atempo は1回で2倍までにして重ねる）。倍率1なら何もしない"""
+    out, k = "", float(speed)
+    while k > 2.0 + 1e-9:
+        out += "atempo=2,"
+        k /= 2.0
+    if abs(k - 1.0) > 1e-9:
+        out += f"atempo={k:.6g},"
+    if gain_db:
+        out += f"volume={gain_db}dB,"
+    return out
+
+
 def _batch_cmd(segs: list[Seg], w: int, h: int, fps: Fraction, out: Path, enc_args: list[str]) -> list[str]:
     cmd = ["ffmpeg", "-y", "-v", "error"]
     for s in segs:
-        dur = s.frames / fps + Fraction(1, 10)
+        dur = s.frames / fps * Fraction(s.speed).limit_denominator(1000) + Fraction(1, 10)
         cmd += ["-ss", f"{s.start:.4f}", "-t", f"{float(dur):.4f}", "-i", str(s.path)]
     parts, labels = [], ""
     for i, s in enumerate(segs):
         d = float(s.frames / fps)
         zoom = f"crop=iw/{s.zoom:.3f}:ih/{s.zoom:.3f}," if s.zoom > 1.001 else ""
+        fast = f"setpts=(PTS-STARTPTS)/{s.speed:g}," if s.speed != 1 else ""
         parts.append(
-            f"[{i}:v]{zoom}scale={w}:{h}:force_original_aspect_ratio=decrease,"
+            f"[{i}:v]{fast}{zoom}scale={w}:{h}:force_original_aspect_ratio=decrease,"
             f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps={fps},format=yuv420p,"
             f"tpad=stop_mode=clone:stop_duration=1,trim=end_frame={s.frames},setpts=PTS-STARTPTS[v{i}]"
         )
         if s.has_audio:
-            parts.append(f"[{i}:a]aresample={SR},aformat=sample_fmts=fltp:channel_layouts=stereo,"
+            parts.append(f"[{i}:a]{_tempo(s.speed, s.gain_db)}aresample={SR},"
+                         f"aformat=sample_fmts=fltp:channel_layouts=stereo,"
                          f"apad=whole_dur={d:.4f},atrim=end={d:.4f},asetpts=PTS-STARTPTS[a{i}]")
         else:
             parts.append(f"anullsrc=r={SR}:cl=stereo,atrim=end={d:.4f}[a{i}]")

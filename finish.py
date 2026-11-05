@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import itertools
 import json
 import os
@@ -30,6 +31,7 @@ import rc_chapters
 import rc_llm
 import rc_plan
 import rc_render
+import rc_speedup
 from rc_ass import build_ass
 from rc_export import build_captions, write_srt
 from rc_media import SourceSet, probe, require_ffmpeg, snap_fps
@@ -151,21 +153,31 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
 
     # ---- 演出プラン ----
     moods = [m for m, files in tpl.bgm_files().items() if files]
+    sp_cfg = rc_speedup.config(tpl)   # 工作の作業シーンの早送り
+    works = rc_speedup.work_ranges(sess, chunks, src.duration) if sp_cfg.get("enabled", True) else []
     usage = {"in": 0, "out": 0}
     if plan_file:
         plan = load_json_loose(plan_file)
         print(f"  演出プラン: {plan_file.name} を使います")
+    elif llm == "api" and works:
+        plan, usage = rc_speedup.make_plan_api(items, sess["mode"], moods, effort, works, tl, sp_cfg)
     elif llm == "api":
         plan, usage = rc_plan.make_plan_api(items, sess["mode"], moods, effort)
     elif llm == "manual":
         p = out_dir / "prompt_plan.md"
-        rc_plan.write_manual_prompt(items, sess["mode"], moods, p)
+        if works:
+            rc_speedup.write_manual_prompt(items, sess["mode"], moods, p, works, tl, sp_cfg)
+        else:
+            rc_plan.write_manual_prompt(items, sess["mode"], moods, p)
         print(f"  claude.ai に貼るプロンプトを作りました: {p}")
         print("  → 返答を claude_plan.json に保存して、--plan claude_plan.json を付けてもう一度実行してください。")
         return None
     else:
         plan = rc_plan.default_plan(items, moods)
+    speedups = rc_speedup.sanitize(plan, works, by_id, sp_cfg)
     plan = rc_plan.sanitize(plan, set(span), moods)
+    if works or speedups:
+        plan.update(rc_speedup.plan_for_save(speedups))
     edited = out_dir / "plan_edited.json"
     if edited.exists() and not (plan_file and Path(plan_file).resolve() == edited.resolve()):
         edited.unlink()   # 新しいプランを使うので、前のプランへの手直し（画面の表）は使わない
@@ -176,6 +188,9 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
             print(f"  Claude API: 約${rc_llm.cost_usd(usage):.2f}")
         return None
     print(f"  テロップ {len(plan['telops'])} / ズーム {len(plan['zooms'])} / BGM区間 {len(plan['bgm'])}")
+    if plan.get("speedups"):
+        print(f"  早送り {len(plan['speedups'])}か所（" + "、".join(
+            f"{fmt_ts(x['start'])}から ×{rc_speedup.fmt_speed(x['speed'])}" for x in plan["speedups"][:6]) + "）")
     if not moods:
         print("  [注意] BGMが登録されていません（テンプレートの bgm フォルダに曲を入れると使われます）")
 
@@ -185,14 +200,18 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
     for z in plan["zooms"]:
         c = by_id[z["id"]]
         zooms.append((c.start - 0.1, c.end + 0.3, float(zcfg.get(z["strength"], 1.15))))
-    segs = split_by_zoom(tl, zooms)
+    ftl = tl   # 完成（本編）の時刻に直すタイムライン。早送りがあれば、その分を縮めたもの
+    if plan.get("speedups"):
+        ftl = rc_speedup.SpeedTimeline(tl, plan["speedups"], zooms, sp_cfg["audio"], sp_cfg["audio_volume_db"])
+        items, span = rc_speedup.retime_items(chunks, cut, corr, ftl, span)
+    segs = ftl.segs if ftl is not tl else split_by_zoom(tl, zooms)
     body_frames = sum(s.frames for s in segs)
     if preview:
         keep_frames, out = round(preview * fps), []
         for s in segs:
             if keep_frames <= 0:
                 break
-            out.append(rc_render.Seg(s.path, s.start, min(s.frames, keep_frames), s.zoom))
+            out.append(dataclasses.replace(s, frames=min(s.frames, keep_frames)))
             keep_frames -= out[-1].frames
         segs, body_frames = out, sum(s.frames for s in out)
     body_dur = float(body_frames / fps)
@@ -222,7 +241,7 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
         se = tpl.se_file(t["se"]) if t.get("se", "none") != "none" else None
         telops.append((s + off, min(e, body_dur) + off, t["text"], t["style"], se))
     # チャプターは発言IDから、この書き出しのタイムライン（出力fps）で時刻を求め直す
-    sess_chapters = rc_chapters.retime(sess.get("chapters", []), tl, by_id)
+    sess_chapters = rc_chapters.retime(sess.get("chapters", []), ftl, by_id)
     chapters = [(c["t"] + off, c["title"]) for c in sess_chapters if c["t"] > 0.5 and inside(c["t"])]
     telops = avoid_chapter_cards(telops, chapters, tpl.get("chapter_card", {}).get("duration", 2.5))
     # 効果音は、章カードを避けてずらした後のテロップの時刻で鳴らす（出さないテロップの音は鳴らさない）
@@ -252,7 +271,10 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
     body = rc_render.render_body(all_segs, w, h, fps, work, inter_args)
     print("    音声のミックス（BGM・効果音・音量の調整）", flush=True)
     loud = rc_render.mix_audio(body, total, sections, se_events, tpl, work)
-    (work / "subs.ass").write_text(build_ass(tpl, w, h, caps, telops, chapters), encoding="utf-8")
+    ass = build_ass(tpl, w, h, caps, telops, chapters)
+    if ftl is not tl:   # 早送り中は画面の隅に「×4」などを出す
+        ass = rc_speedup.add_badges(ass, tpl, w, h, ftl.badge_ranges(), off, body_dur)
+    (work / "subs.ass").write_text(ass, encoding="utf-8")
     logo = tpl.path(tpl.get("logo", {}).get("file", ""))
     stem = sess["stem"]
     out_path = out_dir / (f"{stem}_プレビュー.mp4" if preview else f"{stem}_完成.mp4")
@@ -271,6 +293,9 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
             "video": str(out_path), "duration": round(total, 2), "intro_offset": round(off, 2),
             "chapters": final_chapters, "srt": str(out_dir / f"{stem}_完成.srt"),
         }, ensure_ascii=False, indent=1), encoding="utf-8")
+        if plan.get("speedups"):
+            xp = rc_speedup.write_session_xml(out_dir, plan["speedups"])
+            print(f"  Premiere用（早送り入り）: {xp}")
 
     if thumbs and not preview:
         try:
@@ -314,7 +339,8 @@ def template_preview(template: Path, sample: Path | None) -> None:
     telops = [(0.6, 2.8, "重さ わずか1.2kg！", "emphasis"), (3.0, 5.4, "マキタ DF033D", "info"),
               (3.2, 5.4, "ここ注意", "warning"), (5.6, 7.9, "いや軽すぎ！", "funny")]
     chapters = [(5.6, "実際に使ってみた")]
-    (work / "subs.ass").write_text(build_ass(tpl, w, h, caps, telops, chapters), encoding="utf-8")
+    ass = rc_speedup.add_badges(build_ass(tpl, w, h, caps, telops, chapters), tpl, w, h, [(0.3, 2.8, 4, "fast")])
+    (work / "subs.ass").write_text(ass, encoding="utf-8")
     logo = tpl.path(tpl.get("logo", {}).get("file", ""))
     out = tpl.dir / "template_preview.mp4"
     rc_render.render_final(body, body, {}, "subs.ass", tpl.fonts_dir, logo, tpl, w, h, final, out, work)

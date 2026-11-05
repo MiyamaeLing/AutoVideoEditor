@@ -118,3 +118,27 @@ outline_color = "#111111"   # 文字の縁取り（内側）
 outer_color = "#FFFFFF"     # 文字の縁取り（外側）
 accent_color = "#2B6CB0"    # 帯の色（「上に帯」のデザイン）
 layouts = ["bottom", "band", "side"]   # bottom=下に大きな文字 / band=上に帯 / side=横に文字
+
+# ---- 工作の作業シーンの早送り（工作モードで、喋っていない作業の場面） ----
+[speedup]
+enabled = true            # false にすると、自動では早送りにしない
+min_seconds = 6           # これより短い作業は早送りにしない（秒）
+target_seconds = 10       # 早送りしたあとの長さの目安（秒）。長い作業ほど速くなります
+min_speed = 2             # 早送りの倍率のはば（2〜8倍）
+max_speed = 8
+timelapse_over = 240      # これより長い作業で、8倍でも長すぎるときは「タイムラプス」にする（秒）
+timelapse_max = 30        # タイムラプスの最大の倍率
+audio = "mute"            # mute=作業の音を消してBGMだけ / fast=速くした音を小さく流す
+audio_volume_db = -18     # audio = "fast" のときの音の大きさ
+badge = true              # 早送り中は画面の隅に「×4」などを出す
+badge_text = "▶▶ ×{speed}"           # {speed} が倍率になります
+timelapse_text = "タイムラプス ×{speed}"
+position = "bottom-right" # bottom-right / bottom-left / top-right / top-left
+font = "BIZ UDPGothic"
+size = 54
+bold = true
+color = "#FFFFFF"
+box_color = "#1A1A1A"     # 文字の後ろの箱の色（"" にすると縁取りだけ）
+outline_color = "#1A1A1A"
+outline = 5
+margin = 48
