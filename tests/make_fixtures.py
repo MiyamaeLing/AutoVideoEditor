@@ -38,11 +38,17 @@ def _ff(*args):
 
 
 def find_jp_font() -> Path:
+    import os
+    win_fonts = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
     for p in ("/usr/share/fonts/opentype/ipafont-gothic/ipag.ttf", "/usr/share/fonts/truetype/ipafont-gothic/ipag.ttf",
-              "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"):
+              "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+              *(str(win_fonts / n) for n in ("BIZ-UDGothicR.ttc", "YuGothM.ttc", "meiryo.ttc", "msgothic.ttc"))):
         if Path(p).exists():
             return Path(p)
-    out = subprocess.run(["fc-list", ":lang=ja", "file"], capture_output=True, text=True).stdout.split("\n")
+    try:
+        out = subprocess.run(["fc-list", ":lang=ja", "file"], capture_output=True, text=True).stdout.split("\n")
+    except FileNotFoundError:   # Windows には fc-list がない
+        out = []
     for line in out:
         if line.strip():
             return Path(line.split(":")[0])
@@ -50,7 +56,9 @@ def find_jp_font() -> Path:
 
 
 def make(force: bool = False) -> Path:
-    if (FX / "done").exists() and not force:
+    # 文字起こしのキャッシュはフォルダの場所を含むので、別の場所からコピーした古い素材は作り直す
+    stamp = f"ok {FX.resolve()}"
+    if (FX / "done").exists() and not force and (FX / "done").read_text(encoding="utf-8") == stamp:
         return FX
     if FX.exists():
         shutil.rmtree(FX)
@@ -132,7 +140,7 @@ def make(force: bool = False) -> Path:
             u = np.arange(n) / SR
             y[s0:s0 + n] += (np.sin(2 * np.pi * notes[i % 4] * u) * np.exp(-u * 3))[:len(y) - s0]
         _wav(tpl / "bgm" / mood / f"test_{mood}.wav", y / np.abs(y).max() * 0.7)
-    (FX / "done").write_text("ok")
+    (FX / "done").write_text(stamp, encoding="utf-8")
     return FX
 
 

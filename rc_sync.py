@@ -49,7 +49,9 @@ def find_offset(main: SourceSet, cam2: SourceSet) -> tuple[float, float]:
         n *= 2
     corr = np.fft.irfft(np.fft.rfft(a, n) * np.conj(np.fft.rfft(b, n)), n)
     k = int(np.argmax(corr))
-    if k > n // 2:
+    # 正のずれ（2台目が後から撮り始めた）は 0〜len(a)-1、負のずれは n-len(b)+1〜n-1 の位置に出る。
+    # n//2 で分けると、メインが長いときに正しいずれを負と取り違えるので、len(a) で分ける。
+    if k >= len(a):
         k -= n
     # a[t + k] ≒ b[t]  →  main時刻 = cam2時刻 + k  →  cam2時刻 = main時刻 - k
     offset = -k * HOP / SR

@@ -16,8 +16,17 @@ class Template:
         f = self.dir / "template.toml"
         if not f.exists():
             sys.exit(f"[エラー] テンプレートが見つかりません: {f}")
-        with open(f, "rb") as fp:
-            self.cfg = tomllib.load(fp)
+        # メモ帳で「UTF-8 (BOM 付き)」で保存されても読めるように、BOM を取り除いてから読む
+        try:
+            text = f.read_bytes().decode("utf-8-sig")
+        except UnicodeDecodeError:
+            sys.exit(f"[エラー] テンプレートの文字コードが UTF-8 ではありません: {f}\n"
+                     "  メモ帳の「名前を付けて保存」で、文字コードを「UTF-8」にして保存し直してください。")
+        try:
+            self.cfg = tomllib.loads(text)
+        except tomllib.TOMLDecodeError as e:
+            sys.exit(f"[エラー] テンプレートの書き方に誤りがあります: {f}\n  {e}\n"
+                     "  直前に書き換えた所を確認してください（文字は \"…\" で囲みます）。")
 
     def __getitem__(self, k):
         return self.cfg[k]

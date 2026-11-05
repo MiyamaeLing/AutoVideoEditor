@@ -82,6 +82,27 @@ Ok "FFmpeg: $((Get-Command ffmpeg).Source)"
 
 # ---------------------------------------------------------
 Step "3/5  ツール専用の環境とライブラリ（ここが一番時間がかかります）"
+# 文字起こしのライブラリ（ctranslate2 / onnxruntime）は Visual C++ ランタイム（MSVCP140.dll）が必要
+$VCUrl = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+function Test-VCRedist {
+    foreach ($k in @("HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64",
+                     "HKLM:\SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\x64")) {
+        $r = Get-ItemProperty -Path $k -ErrorAction SilentlyContinue
+        if ($r -and $r.Installed -eq 1 -and ($r.Major -gt 14 -or ($r.Major -eq 14 -and $r.Minor -ge 40))) { return $true }
+    }
+    return $false
+}
+if (-not (Test-VCRedist)) {
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        Write-Host "  Visual C++ ランタイム（文字起こしに必要な部品）をインストールします…"
+        winget install -e --id Microsoft.VCRedist.2015+.x64 --accept-package-agreements --accept-source-agreements
+    }
+}
+if (Test-VCRedist) {
+    Ok "Visual C++ ランタイム"
+} else {
+    Warn "Visual C++ ランタイムを確認できませんでした。文字起こしで「DLL load failed」と出たら、${VCUrl} をダウンロードして実行してください。"
+}
 $vpy = "$App\.venv\Scripts\python.exe"
 if (-not (Test-Path $vpy)) {
     & $py -m venv "$App\.venv"
@@ -94,8 +115,14 @@ Ok "ライブラリのインストール完了"
 
 # ---------------------------------------------------------
 Step "4/5  動作確認"
-& $vpy -c "import faster_whisper, anthropic, PySide6; print('ok')" | Out-Null
-if ($LASTEXITCODE -ne 0) { Fail "ライブラリの読み込みに失敗しました。" }
+$check = & $vpy -c "import faster_whisper, anthropic, PySide6; print('ok')" 2>&1
+if ($LASTEXITCODE -ne 0) {
+    $check | Select-Object -Last 5 | ForEach-Object { Write-Host "  $_" }
+    if ("$check" -match "DLL load failed|MSVCP140|VCRUNTIME") {
+        Fail "ライブラリの読み込みに失敗しました。Visual C++ ランタイムが足りません。${VCUrl} をダウンロードして実行してから、もう一度 setup.bat を実行してください。"
+    }
+    Fail "ライブラリの読み込みに失敗しました。Visual C++ ランタイム（${VCUrl}）を入れてから、もう一度 setup.bat を実行してみてください。"
+}
 Ok "ライブラリの読み込み"
 if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
     $gpu = & nvidia-smi --query-gpu=name --format=csv,noheader 2>$null | Select-Object -First 1

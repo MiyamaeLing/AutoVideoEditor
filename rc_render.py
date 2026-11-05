@@ -45,16 +45,22 @@ def run_progress(cmd: list[str], total: float, cwd: Path | None = None, what: st
         proc = subprocess.Popen(cmd[:1] + ["-progress", "pipe:1", "-nostats"] + cmd[1:], cwd=cwd,
                                 stdout=subprocess.PIPE, stderr=err, text=True, encoding="utf-8", errors="replace")
         last = -10
-        for line in proc.stdout:
-            if line.startswith("out_time_us=") and total > 0:
-                try:
-                    pct = int(int(line.split("=")[1]) / 1e6 / total * 100)
-                except ValueError:
-                    continue
-                if pct >= last + 5:
-                    last = pct
-                    print(f"      {min(pct, 100)}%", flush=True)
-        proc.wait()
+        try:
+            for line in proc.stdout:
+                if line.startswith("out_time_us=") and total > 0:
+                    try:
+                        pct = int(int(line.split("=")[1]) / 1e6 / total * 100)
+                    except ValueError:
+                        continue
+                    if pct >= last + 5:
+                        last = pct
+                        print(f"      {min(pct, 100)}%", flush=True)
+            proc.wait()
+        finally:
+            # Ctrl+C などで途中で止まったときに、FFmpeg だけが裏で動き続けないようにする
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
         if proc.returncode != 0:
             err.seek(0)
             tail = "\n".join(err.read().strip().splitlines()[-15:])
@@ -191,6 +197,8 @@ def mix_audio(body: Path, total: float, bgm_sections, se_events, tpl: Template, 
 def render_final(body: Path, mix: Path, loud: dict, ass_name: str, fonts: Path | None, logo: Path | None,
                  tpl: Template, w: int, h: int, enc_args: list[str], out: Path, work: Path) -> None:
     target = tpl.get("audio", {}).get("loudness", -14.0)
+    # FFmpeg は作業フォルダ（cwd=work）で動かすので、入出力のパスは絶対パスにしておく
+    body, mix, out = Path(body).resolve(), Path(mix).resolve(), Path(out).resolve()
     vf = f"[0:v]ass={ass_name}" + (":fontsdir=fonts" if fonts else "")
     cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(body), "-i", str(mix)]
     if fonts:

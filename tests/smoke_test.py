@@ -30,7 +30,8 @@ def check(name: str, ok: bool, detail: str = ""):
 
 
 def run(args: list[str], name: str) -> bool:
-    p = subprocess.run([PY, *args], cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    p = subprocess.run([PY, *args], cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       env=dict(os.environ, PYTHONIOENCODING="utf-8"))
     ok = p.returncode == 0
     check(name, ok, "" if ok else "\n" + "\n".join((p.stdout + p.stderr).strip().splitlines()[-15:]))
     return ok
@@ -89,15 +90,25 @@ from PySide6.QtWidgets import QApplication
 import gui
 app = QApplication([])
 w = gui.MainWindow(); w.show()
+assert Path({str(out)!r}, 'session.json').exists(), 'session.json がありません（荒編集が失敗しています）'
 w.review.load(Path({str(out)!r}))
 assert w.review.table.rowCount() > 0
 w.grab().save({str(out / 'gui_smoke.png')!r})
 print('gui ok')
 """
     env = dict(os.environ, APPDATA=str(fx / "appdata"))
-    p = subprocess.run([PY, "-c", code], cwd=ROOT, capture_output=True, text=True, env=env)
-    check("GUIの起動と結果の読み込み", p.returncode == 0 and "gui ok" in p.stdout,
-          "" if p.returncode == 0 else p.stderr[-800:])
+    env["PYTHONIOENCODING"] = "utf-8"
+    try:
+        p = subprocess.run([PY, "-c", code], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", env=env, timeout=300)
+        check("GUIの起動と結果の読み込み", p.returncode == 0 and "gui ok" in p.stdout,
+              "" if p.returncode == 0 else p.stderr[-800:])
+    except subprocess.TimeoutExpired:
+        check("GUIの起動と結果の読み込み", False, "時間切れ（ダイアログが出たまま止まった可能性があります）")
+
+    # 追加・修正した機能のテスト（tests/test_*.py）
+    import test_fixes
+    test_fixes.run_all(check, out, fx)
 
     failed = [r for r in results if not r[1]]
     print(f"\n{len(results) - len(failed)}/{len(results)} 件 成功")

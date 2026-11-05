@@ -69,11 +69,86 @@ def build_description(desc: str, chapters: list[dict], tags: list[str]) -> str:
     return "\n\n".join(p for p in parts if p)
 
 
-def default_meta(out_dir: Path) -> dict:
-    """荒編集・仕上げの結果から、YouTube に設定する内容の初期値を作る（youtube_meta.json があればそれを使う）"""
-    saved = out_dir / "youtube_meta.json"
-    if saved.exists():
-        return json.loads(saved.read_text(encoding="utf-8"))
+CHAPTER_HEAD = "▼ チャプター"
+# 画面やファイルで人が直す欄（完成動画を作り直しても引き継ぐ）
+USER_FIELDS = ("title", "tags", "category_id", "privacy", "upload_captions", "thumbnail")
+
+
+def source_stamp(out_dir: Path) -> str:
+    """完成動画（final_info.json）とチャプターの中身から作る目印。作り直すと変わる"""
+    import hashlib
+    final = out_dir / "final_info.json"
+    src = final if final.exists() else out_dir / "session.json"
+    try:
+        d = json.loads(src.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return ""
+    key = {k: d.get(k) for k in ("video", "duration", "chapters", "srt")}
+    return hashlib.sha1(json.dumps(key, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+
+
+def chapter_block(chapters: list[dict]) -> str:
+    return (CHAPTER_HEAD + "\n" + "\n".join(f"{fmt_chapter(c['t'])} {c['title']}" for c in chapters)) if chapters else ""
+
+
+def replace_chapters(desc: str, chapters: list[dict]) -> str:
+    """概要欄の「▼ チャプター」の部分だけを、新しいチャプターに入れ替える（ほかの文はそのまま）"""
+    parts = desc.split("\n\n")
+    new = chapter_block(chapters)
+    idx = next((i for i, p in enumerate(parts) if p.lstrip().startswith(CHAPTER_HEAD)), None)
+    if idx is not None:
+        if new:
+            parts[idx] = new
+        else:
+            del parts[idx]
+    elif new:
+        # チャプターの欄がなければ、ハッシュタグの行の前（なければ最後）に入れる
+        tag = next((i for i, p in enumerate(parts) if p.strip().startswith("#")), len(parts))
+        parts.insert(tag, new)
+    return "\n\n".join(p for p in parts if p.strip())
+
+
+def default_meta(out_dir: Path, use_saved: bool = True) -> dict:
+    """荒編集・仕上げの結果から、YouTube に設定する内容を作る。
+
+    youtube_meta.json（画面で直した内容）があれば、それを使う。ただし完成動画が作り直されていたら、
+    タイトル・タグなど人が直す欄だけを引き継ぎ、概要欄のチャプター・動画ファイル・字幕は作り直す。
+    動画IDも、前の動画を指したままにならないように空にする（previous_video_id に残す）。
+    use_saved=False なら、保存した内容を使わずに AI の案から作り直す。
+    """
+    fresh = _fresh_meta(out_dir)
+    saved_p = out_dir / "youtube_meta.json"
+    if not use_saved or not saved_p.exists():
+        return fresh
+    try:
+        saved = json.loads(saved_p.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return fresh
+    saved.pop("notice", None)
+    if saved.get("source_stamp"):
+        changed = saved["source_stamp"] != fresh["source_stamp"]
+    else:   # 目印のない古い保存ファイル：完成動画の情報の方が新しければ、作り直されたとみなす
+        fi = out_dir / "final_info.json"
+        changed = fi.exists() and fi.stat().st_mtime > saved_p.stat().st_mtime
+    if not changed:
+        return {**fresh, **saved}
+    meta = dict(fresh)
+    for k in USER_FIELDS:
+        if k in saved:
+            meta[k] = saved[k]
+    if meta.get("thumbnail") and not Path(meta["thumbnail"]).exists():
+        meta["thumbnail"] = fresh["thumbnail"]
+    if "description" in saved:
+        meta["description"] = replace_chapters(saved["description"], fresh["chapters"])
+    if saved.get("video_id"):
+        meta["previous_video_id"] = saved["video_id"]
+    meta["video_id"] = ""
+    meta["notice"] = ("完成動画が作り直されていたので、概要欄のチャプターを今の動画に合わせて更新しました。"
+                      + ("前に設定した動画IDは空にしました（新しくアップした動画を探します）。" if saved.get("video_id") else ""))
+    return meta
+
+
+def _fresh_meta(out_dir: Path) -> dict:
     sess = json.loads((out_dir / "session.json").read_text(encoding="utf-8"))
     final = json.loads((out_dir / "final_info.json").read_text(encoding="utf-8")) \
         if (out_dir / "final_info.json").exists() else {}
@@ -95,10 +170,14 @@ def default_meta(out_dir: Path) -> dict:
         "upload_captions": False,
         "privacy": "private",
         "video_id": "",
+        "chapters": chapters,
+        "source_stamp": source_stamp(out_dir),
     }
 
 
 def save_meta(out_dir: Path, meta: dict) -> None:
+    meta = {k: v for k, v in meta.items() if k != "notice"}
+    meta.setdefault("source_stamp", source_stamp(out_dir))
     (out_dir / "youtube_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
 
 

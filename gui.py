@@ -12,7 +12,7 @@ import sys
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QProcess, QProcessEnvironment, QSettings, Qt, QTimer, QUrl
+from PySide6.QtCore import QProcess, QProcessEnvironment, QSettings, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QBrush, QColor, QDesktopServices, QFont, QGuiApplication, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
@@ -45,6 +45,9 @@ STYLE_JA = {"emphasis": "強調", "info": "補足", "warning": "注意", "funny"
 SE_JA = {"none": "なし", "pop": "ポンッ", "ding": "チーン", "whoosh": "シュッ", "boing": "ボヨン"}
 MOOD_JA = {"calm": "落ち着いた", "upbeat": "明るい", "tension": "緊張感", "emotional": "しんみり", "none": "BGMなし"}
 
+# 色を付けたボタンも、押せないときは灰色にして分かるようにする
+DISABLED_CSS = " QPushButton:disabled { background: #CBD5E0; color: #F7FAFC; }"
+
 C_CUT = QColor("#F3D6D6")
 C_REVIEW = QColor("#FFF3C4")
 C_HILITE = QColor("#D8F0DA")
@@ -68,18 +71,56 @@ def open_path(p: Path):
     QDesktopServices.openUrl(QUrl.fromLocalFile(str(p)))
 
 
+def has_api_key(settings: QSettings) -> bool:
+    return bool(settings.value("api_key", "") or os.environ.get("ANTHROPIC_API_KEY"))
+
+
+# コマンド向けの案内を、画面での操作に言い換える（エラーのダイアログに添える）
+GUI_HINTS = [
+    ("ANTHROPIC_API_KEY", "「作成」タブの「APIキーを設定…」でキーを入れるか、AIの欄で「claude.ai に貼り付けて使う」"
+                          "または「AIを使わない」を選んでから、もう一度押してください。"),
+    ("pip install", "必要なライブラリが入っていません。setup.bat をもう一度実行してください。"),
+    ("--video-id", "「YouTubeへ」画面の「動画ID」欄に YouTube Studio の動画IDを入れるか、"
+                   "表示される一覧から動画を選んでください。"),
+    ("Googleアカウントとの連携が必要", "「YouTubeへ」画面で「Googleアカウントと連携」を押してください。"),
+    ("client_secret", "「YouTubeへ」画面の「連携の準備（client_secret.json）…」で、"
+                      "Google Cloud からダウンロードしたファイルを選んでください。"),
+    ("--llm manual", "AIの欄で「claude.ai に貼り付けて使う」を選ぶと、APIを使わずに進められます。"),
+    ("h264_nvenc", "テンプレートの encoder を \"libx264\" にすると、GPUを使わずに書き出せます。"),
+    ("作業フォルダを消せませんでした", "少し待ってから、もう一度押してください。"),
+    ("out of memory", "「作成」タブの詳細設定で「文字起こし」を「CPU」にするか、ほかのアプリを閉じてください。"),
+]
+
+
+def gui_hint(text: str) -> str:
+    keys = [key for key, _ in GUI_HINTS if key in text]
+    if "ANTHROPIC_API_KEY" in keys and "--llm manual" in keys:
+        keys.remove("--llm manual")   # 同じことを2回言わない
+    return "\n".join(h for key, h in GUI_HINTS if key in keys)
+
+
 # ============================================================
 #  処理の実行（roughcut.py / finish.py を別プロセスで動かす）
 # ============================================================
 class Runner(QWidget):
     """下部の「進み具合」パネル。コマンドを順番に実行して、ログと進捗を表示する。"""
 
+    busy_changed = Signal(bool)
+
     def __init__(self, settings: QSettings):
         super().__init__()
         self.settings = settings
         self.proc: QProcess | None = None
         self.on_done = None
+        self.handle_error = None
         self._buf = ""
+        self._dec = None
+        self._stopped = False
+        self._err: list[str] = []      # 最後の「[エラー]」の内容
+        self._err_open = False
+        self._tb = ""                  # Traceback の最後の行
+        self._in_tb = False
+        self.last_error = ""
 
         self.stage = QLabel("待機中")
         self.stage.setStyleSheet("font-weight: bold;")
@@ -122,15 +163,26 @@ class Runner(QWidget):
             e.insert("ANTHROPIC_API_KEY", key)
         return e
 
-    def start(self, script: str, args: list[str], title: str, on_done=None) -> bool:
+    def start(self, script: str, args: list[str], title: str, on_done=None, handle_error=None) -> bool:
+        """script を実行する。handle_error(エラー文) が True を返したら、エラーのダイアログは出さない"""
         if self.busy:
             QMessageBox.information(self, "実行中", "ほかの処理が実行中です。終わるまでお待ちください。")
             return False
+        import codecs
         self.on_done = on_done
+        self.handle_error = handle_error
+        self._dec = codecs.getincrementaldecoder("utf-8")(errors="replace")  # 文字の途中で区切られても化けない
+        self._stopped = False
+        self._err, self._err_open, self._tb, self._in_tb, self.last_error = [], False, "", False, ""
         self.proc = QProcess(self)
         self.proc.setProcessChannelMode(QProcess.MergedChannels)
         self.proc.setProcessEnvironment(self.env())
         self.proc.setWorkingDirectory(str(APP_DIR))
+        if os.name != "nt" and hasattr(QProcess, "setUnixProcessParameters"):
+            try:   # 中止のときに、FFmpeg などの孫プロセスもまとめて止められるようにする
+                self.proc.setUnixProcessParameters(QProcess.UnixProcessFlag.CreateNewSession)
+            except Exception:  # noqa: BLE001
+                pass
         self.proc.readyReadStandardOutput.connect(self._read)
         self.proc.finished.connect(self._finished)
         self.stage.setText(title)
@@ -138,15 +190,34 @@ class Runner(QWidget):
         self.stop_btn.setEnabled(True)
         self.log.appendPlainText(f"\n===== {title} =====")
         self.proc.start(sys.executable, ["-u", str(APP_DIR / script), *args])
+        self.busy_changed.emit(True)
         return True
 
-    def stop(self):
+    def stop(self, wait: bool = False):
+        """実行中の処理を、FFmpeg などの子プロセスも含めて止める"""
+        if not self.proc:
+            return
+        self._stopped = True
+        pid = int(self.proc.processId() or 0)
+        if pid:
+            try:
+                if os.name == "nt":
+                    import subprocess
+                    subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True, timeout=15)
+                else:
+                    import signal
+                    if os.getpgid(pid) == pid:
+                        os.killpg(pid, signal.SIGKILL)
+            except Exception:  # noqa: BLE001
+                pass
         if self.proc:
             self.proc.kill()
-            self.log.appendPlainText("[中止しました]")
+            if wait:
+                self.proc.waitForFinished(5000)
+        self.log.appendPlainText("[中止しました]")
 
     def _read(self):
-        data = bytes(self.proc.readAllStandardOutput()).decode("utf-8", errors="replace")
+        data = self._dec.decode(bytes(self.proc.readAllStandardOutput()))
         self._buf += data.replace("\r", "\n")
         *lines, self._buf = self._buf.split("\n")
         for ln in lines:
@@ -172,28 +243,75 @@ class Runner(QWidget):
             self.bar.setRange(0, 0)
         if s.startswith("[エラー]") or s.startswith("Traceback"):
             self.toggle.setChecked(True)
+        self._note_error(ln)
+
+    def _note_error(self, ln: str):
+        """ログの中の「[エラー]」とその続きの数行、または Traceback の最後の行を覚えておく"""
+        s = ln.strip()
+        if s.startswith("[エラー]"):
+            self._err, self._err_open = [s], True
+            return
+        if s.startswith("Traceback"):
+            self._in_tb, self._err_open = True, False
+            return
+        if self._in_tb:
+            if not ln.startswith((" ", "\t")):
+                self._tb, self._in_tb = s, False
+            return
+        if self._err_open:
+            if s.startswith(("■", "[注意]", "[お知らせ]")) or len(self._err) >= 8:
+                self._err_open = False
+            else:
+                self._err.append(s)
 
     def _set(self, v: int):
         self.bar.setRange(0, 100)
         self.bar.setValue(min(v, 100))
 
     def _finished(self, code: int, _status):
+        if self._dec:
+            self._buf += self._dec.decode(b"", final=True)
         if self._buf.strip():
-            self.log.appendPlainText(self._buf)
+            for ln in self._buf.split("\n"):
+                if ln.strip():
+                    self.log.appendPlainText(ln)
+                    self._note_error(ln)
             self._buf = ""
         self.proc = None
         self.stop_btn.setEnabled(False)
         self.bar.setRange(0, 100)
         self.bar.setValue(100 if code == 0 else 0)
-        if code != 0:
-            self.stage.setText("エラーで止まりました（ログを確認してください）")
+        stopped, self._stopped = self._stopped, False
+        if stopped:
+            self.stage.setText("中止しました")
+        elif code != 0:
+            err = "\n".join(self._err) if self._err else self._tb
+            self.last_error = err
+            first = err.splitlines()[0].replace("[エラー]", "").strip() if err else ""
+            self.stage.setText(f"エラーで止まりました：{first}" if first else "エラーで止まりました（ログを確認してください）")
             self.toggle.setChecked(True)
-            QMessageBox.warning(self, "エラー", "処理がエラーで止まりました。\n下のログの最後の数行を確認してください。")
+            handler, self.handle_error = self.handle_error, None
+            handled = False
+            if handler:
+                try:
+                    handled = bool(handler(err))
+                except Exception:  # noqa: BLE001
+                    handled = False
+            body = "処理がエラーで止まりました。"
+            if err:
+                body += "\n\n" + (err if len(err) < 1200 else err[:1200] + "…")
+            hint = gui_hint(err)
+            if hint:
+                body += "\n\n【どうすればいい？】\n" + hint
+            body += "\n\n詳しくは下のログを確認してください。"
+            if not handled:
+                QMessageBox.warning(self, "エラー", body)
         else:
             self.stage.setText("完了")
+        self.busy_changed.emit(False)
         cb, self.on_done = self.on_done, None
         if cb:
-            cb(code == 0)
+            cb(code == 0 and not stopped)
 
 
 # ============================================================
@@ -426,7 +544,8 @@ class CreatePage(QWidget):
         for b in (self.btn_rough, self.btn_full):
             b.setMinimumHeight(44)
             b.setStyleSheet("font-size: 15px; font-weight: bold;")
-        self.btn_full.setStyleSheet(self.btn_full.styleSheet() + "background: #2B6CB0; color: white;")
+        self.btn_full.setStyleSheet("QPushButton { font-size: 15px; font-weight: bold; background: #2B6CB0; color: white; }"
+                                    + DISABLED_CSS)
         self.btn_rough.clicked.connect(lambda: self.start(full=False))
         self.btn_full.clicked.connect(lambda: self.start(full=True))
         br = QHBoxLayout()
@@ -504,9 +623,7 @@ class CreatePage(QWidget):
             QMessageBox.information(self, "素材がありません", "素材の動画をドラッグ＆ドロップしてください。")
             return
         llm = self.llm.currentData()
-        if llm == "api" and not (self.win.settings.value("api_key", "") or os.environ.get("ANTHROPIC_API_KEY")):
-            QMessageBox.information(self, "APIキーが未設定です",
-                                    "「APIキーを設定…」から設定するか、AIの欄で「claude.ai に貼り付けて使う」を選んでください。")
+        if not self.win.check_api_key(llm):
             return
         self.save_settings()
         out = self.out_dir()
@@ -574,7 +691,8 @@ class ThumbDialog(QDialog):
         self.setWindowTitle("サムネイル案")
         info = read_json(tdir / "thumbnails.json", []) or []
         lay = QVBoxLayout(self)
-        lay.addWidget(QLabel("クリックすると大きく開きます。気に入ったものを YouTube Studio でアップロードしてください。"))
+        lay.addWidget(QLabel("クリックすると大きく開きます。気に入ったものは「YouTubeへ」画面の「サムネイル」で選ぶと、"
+                             "動画に自動で設定されます。"))
         grid = QGridLayout()
         files = sorted(tdir.glob("thumb_*.jpg"))
         rows = sorted({f.stem.split("_")[1] for f in files})
@@ -594,6 +712,9 @@ class ThumbDialog(QDialog):
         redo.clicked.connect(self._redo)
         again = QPushButton("AIに選び直してもらう")
         again.clicked.connect(lambda: (self.accept(), self.page.thumbnails(text="")))
+        if page.win.create.llm.currentData() != "api":
+            again.setEnabled(False)
+            again.setToolTip("「作成」タブの AI を「Claude APIで自動」にすると、AIが画像を見て選び直します。")
         folder = QPushButton("フォルダを開く")
         folder.clicked.connect(lambda: open_path(tdir))
         close = QPushButton("閉じる")
@@ -679,6 +800,10 @@ class YouTubeDialog(QDialog):
         self.caps = QCheckBox("字幕ファイル（SRT）も追加する（字幕は動画に焼き込み済みなので、通常は不要）")
         self.caps.setChecked(bool(self.meta.get("upload_captions")))
         form.addRow("", self.caps)
+        self.vid = QLineEdit(self.meta.get("video_id", ""))
+        self.vid.setPlaceholderText("空なら、ファイル名と同じタイトルの動画を自動で探します（例: dQw4w9WgXcQ）")
+        self.vid.setToolTip("YouTube Studio の動画の URL「studio.youtube.com/video/○○○/edit」の○○○の部分です")
+        form.addRow("動画ID（空なら自動で探す）", self.vid)
 
         copy_row = QHBoxLayout()
         for text, fn in (("タイトルをコピー", lambda: self._copy(self.title.currentText())),
@@ -706,8 +831,20 @@ class YouTubeDialog(QDialog):
         act.addWidget(b_upload)
         act.addWidget(b_apply)
 
+        b_reset = QPushButton("AIの案に戻す")
+        b_reset.setToolTip("画面で直した内容を捨てて、AIの案と今の完成動画のチャプターから作り直します")
+        b_reset.clicked.connect(self._reset)
+        copy_row.addWidget(b_reset)
+
+        self.notice = QLabel(self.meta.get("notice", ""))
+        self.notice.setWordWrap(True)
+        self.notice.setStyleSheet("background: #FFF3C4; padding: 6px;")
+        self.notice.setVisible(bool(self.meta.get("notice")))
+        self.meta.pop("notice", None)
+
         lay = QVBoxLayout(self)
         lay.addWidget(steps)
+        lay.addWidget(self.notice)
         lay.addLayout(conn_row)
         lay.addLayout(form)
         lay.addWidget(QLabel("Googleの連携をしない場合は、下のボタンでコピーして Studio に貼り付けてください。"))
@@ -750,8 +887,28 @@ class YouTubeDialog(QDialog):
         m = dict(self.meta)
         m.update(title=self.title.currentText().strip(), description=self.desc.toPlainText(), tags=self._tags(),
                  category_id=self.cat.currentData(), thumbnail=self.thumb.currentData() or "",
-                 upload_captions=self.caps.isChecked())
+                 upload_captions=self.caps.isChecked(), video_id=self.vid.text().strip())
         return m
+
+    def _set_fields(self, m: dict):
+        self.meta = m
+        self.title.clear()
+        for t in [m["title"]] + [t for t in m.get("title_candidates", []) if t != m["title"]]:
+            self.title.addItem(t)
+        self.desc.setPlainText(m["description"])
+        self.tags.setText("、".join(m["tags"]))
+        self.cat.setCurrentIndex(max(0, self.cat.findData(m["category_id"])))
+        self.thumb.setCurrentIndex(max(0, self.thumb.findData(m.get("thumbnail", ""))))
+        self.caps.setChecked(bool(m.get("upload_captions")))
+
+    def _reset(self):
+        if QMessageBox.question(self, "AIの案に戻す", "タイトル・概要欄・タグなど、画面で直した内容を捨てて、"
+                                "AIの案から作り直します。よろしいですか？") != QMessageBox.Yes:
+            return
+        m = self.Y.default_meta(self.out, use_saved=False)
+        m["video_id"] = self.vid.text().strip()
+        self._set_fields(m)
+        self.notice.setVisible(False)
 
     def _save(self) -> bool:
         m = self.collect()
@@ -778,12 +935,43 @@ class YouTubeDialog(QDialog):
         if not self._save():
             return
 
+        cand = self.out / "youtube_candidates.json"
+        cand.unlink(missing_ok=True)
+
         def done(ok):
             if ok:
                 m = self.Y.default_meta(self.out)
+                self.meta["video_id"] = m.get("video_id", "")
+                self.vid.setText(m.get("video_id", ""))
                 if m.get("video_id"):
                     QDesktopServices.openUrl(QUrl(f"https://studio.youtube.com/video/{m['video_id']}/edit"))
-        self.page.win.runner.start("youtube.py", [str(self.out), "--apply"], "YouTubeの動画に設定を反映中", done)
+
+        def not_found(_err) -> bool:
+            """ファイル名と同じタイトルの動画がなかったときは、最近の動画から選んでもらう"""
+            ups = read_json(cand, None)
+            if ups is None:
+                return False
+            QTimer.singleShot(0, lambda: self._choose_video(ups))
+            return True
+        args = [str(self.out), "--apply"]
+        if self.vid.text().strip():
+            args += ["--video-id", self.vid.text().strip()]
+        self.page.win.runner.start("youtube.py", args, "YouTubeの動画に設定を反映中", done, handle_error=not_found)
+
+    def _choose_video(self, uploads: list[dict]):
+        if not uploads:
+            QMessageBox.information(self, "動画が見つかりません",
+                                    "このチャンネルに動画が見つかりませんでした。先に YouTube Studio で完成動画を"
+                                    "アップロードしてから、もう一度押してください。")
+            return
+        labels = [f"{u['title']}（{u.get('privacy', '')}・ID {u['id']}）" for u in uploads]
+        item, ok = QInputDialog.getItem(
+            self, "どの動画に設定しますか？",
+            "完成動画のファイル名と同じタイトルの動画が見つかりませんでした。\n"
+            "Studio でタイトルを変えた場合などに起こります。設定する動画を選んでください。", labels, 0, False)
+        if ok and item:
+            self.vid.setText(uploads[labels.index(item)]["id"])
+            self._apply()
 
     def _upload(self):
         if QMessageBox.question(
@@ -796,7 +984,12 @@ class YouTubeDialog(QDialog):
             if not self.Y.token_path().exists():
                 QMessageBox.information(self, "連携が必要です", "先に「Googleアカウントと連携」をしてください。")
             return
-        self.page.win.runner.start("youtube.py", [str(self.out), "--upload"], "YouTubeにアップロード中")
+        def done(ok):
+            if ok:   # アップロードで決まった動画IDを、画面にも反映する（閉じたときに空で上書きしない）
+                vid = self.Y.default_meta(self.out).get("video_id", "")
+                self.meta["video_id"] = vid
+                self.vid.setText(vid)
+        self.page.win.runner.start("youtube.py", [str(self.out), "--upload"], "YouTubeにアップロード中", done)
 
     def done(self, r):
         if self.out:
@@ -939,13 +1132,13 @@ class ReviewPage(QWidget):
         self.b_plan = QPushButton("演出プランを作る")
         self.b_prev = QPushButton("最初の60秒を試し書き出し")
         self.b_final = QPushButton("完成動画を書き出す")
-        self.b_final.setStyleSheet("background: #2B6CB0; color: white; font-weight: bold;")
+        self.b_final.setStyleSheet("QPushButton { background: #2B6CB0; color: white; font-weight: bold; }" + DISABLED_CSS)
         self.b_play = QPushButton("完成動画を再生")
         self.b_thumb = QPushButton("サムネイル案")
         self.b_thumb.setToolTip("動画の中からサムネイルに向いた場面を選び、文字入りの案を9枚作ります")
         self.b_thumb.clicked.connect(self.thumbnails)
         self.b_yt = QPushButton("YouTubeへ")
-        self.b_yt.setStyleSheet("background: #C53030; color: white; font-weight: bold;")
+        self.b_yt.setStyleSheet("QPushButton { background: #C53030; color: white; font-weight: bold; }" + DISABLED_CSS)
         self.b_yt.clicked.connect(lambda: YouTubeDialog(self).exec())
         self.b_apply.clicked.connect(self.apply_cuts)
         self.b_xml.clicked.connect(self._open_xml)
@@ -1047,7 +1240,7 @@ class ReviewPage(QWidget):
         self._loading = False
         total = self.chunks[-1]["end"] if self.chunks else 0
         self.summary.setText(f"発言 {len(self.chunks)}個のうち {n_cut}個をカット　/　元の長さ {fmt(total)}　"
-                             f"→ 結果は report.md・○○_荒編集.xml を参照")
+                             f"→ 結果は report.md・{self.sess.get('stem', '')}_荒編集.xml を参照")
         self._apply_filter()
 
     def _color_row(self, r: int):
@@ -1131,9 +1324,26 @@ class ReviewPage(QWidget):
                 corr[cid] = text
         return cut, keep, corr
 
+    def _save_plan_edits(self) -> Path | None:
+        """演出の表の今の内容を plan_edited.json に保存する（表が空なら何もしない）"""
+        if not self.out or not (self.out / "plan_used.json").exists() or self._plan_rows() == 0:
+            return None
+        p = self.out / "plan_edited.json"
+        p.write_text(json.dumps(self._collect_plan(), ensure_ascii=False, indent=1), encoding="utf-8")
+        return p
+
+    def _plan_rows(self) -> int:
+        return self.t_telop.rowCount() + self.t_zoom.rowCount() + self.t_bgm.rowCount()
+
+    def _discard_plan_edits(self):
+        """演出プランを作り直したときは、前のプランへの手直しは使わない"""
+        if self.out:
+            (self.out / "plan_edited.json").unlink(missing_ok=True)
+
     def apply_cuts(self, then=None):
         if not self.out:
             return
+        self._save_plan_edits()   # 読み込み直しで、演出の表の手直しが消えないように
         cut, keep, corr = self._desired()
         d = dict(self.decisions)
         d["manual"] = {"cut": cut, "keep": keep}
@@ -1170,13 +1380,16 @@ class ReviewPage(QWidget):
     def _template(self) -> str:
         return self.win.create.template.currentData()
 
-    def make_plan(self):
+    def make_plan(self, then=None):
+        """演出プランを作る。then があれば、プランができたあとに呼ぶ（「完成まで一気に作る」用）"""
         if not self.out:
             return
-        if self._dirty():
-            self.apply_cuts(then=self.make_plan)
-            return
         llm = self.win.create.llm.currentData()
+        if not self.win.check_api_key(llm):
+            return
+        if self._dirty():
+            self.apply_cuts(then=lambda: self.make_plan(then))
+            return
         args = [str(self.out), "--template", self._template(), "--plan-only", "--llm", llm,
                 "--effort", self.win.create.effort.currentData()]
 
@@ -1184,22 +1397,33 @@ class ReviewPage(QWidget):
             if not ok:
                 return
             if llm == "manual" and (self.out / "prompt_plan.md").exists() and not (self.out / "plan_used.json").exists():
-                self._manual_plan()
+                self._manual_plan(then)
             else:
+                self._discard_plan_edits()
                 self._fill_plan()
                 self.tabs.setCurrentIndex(1)
+                if then:
+                    then()
         if llm == "manual":
             (self.out / "plan_used.json").unlink(missing_ok=True)
         self.win.runner.start("finish.py", args, "演出プランを作成中", done)
 
-    def _manual_plan(self):
+    def _manual_plan(self, then=None):
         dlg = ManualDialog(self, self.out / "prompt_plan.md", "演出プランを作る")
         if dlg.exec():
             p = self.out / "claude_plan.json"
             p.write_text(dlg.text(), encoding="utf-8")
             args = [str(self.out), "--template", self._template(), "--plan-only", "--plan", str(p)]
-            self.win.runner.start("finish.py", args, "演出プランを読み込み中",
-                                  lambda ok: ok and (self._fill_plan(), self.tabs.setCurrentIndex(1)))
+
+            def done(ok):
+                if not ok:
+                    return
+                self._discard_plan_edits()
+                self._fill_plan()
+                self.tabs.setCurrentIndex(1)
+                if then:
+                    then()
+            self.win.runner.start("finish.py", args, "演出プランを読み込み中", done)
 
     def _combo(self, mapping: dict, value: str) -> QComboBox:
         cb = QComboBox()
@@ -1208,10 +1432,10 @@ class ReviewPage(QWidget):
         cb.setCurrentIndex(max(0, cb.findData(value)))
         return cb
 
-    def _check(self, cid) -> QTableWidgetItem:
+    def _check(self, cid, on: bool = True) -> QTableWidgetItem:
         it = QTableWidgetItem()
         it.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-        it.setCheckState(Qt.Checked)
+        it.setCheckState(Qt.Checked if on else Qt.Unchecked)
         it.setData(Qt.UserRole, cid)
         return it
 
@@ -1220,8 +1444,18 @@ class ReviewPage(QWidget):
         it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
         return it
 
+    def _plan_source(self) -> Path | None:
+        """表に出すプラン。手直し（plan_edited.json）があればそちらを優先する（rc_thumb と同じ順）"""
+        if not self.out:
+            return None
+        used, edited = self.out / "plan_used.json", self.out / "plan_edited.json"
+        if edited.exists() and used.exists():
+            return edited
+        return used if used.exists() else None
+
     def _fill_plan(self):
-        plan = read_json(self.out / "plan_used.json") if self.out else None
+        src = self._plan_source()
+        plan = read_json(src) if src else None
         for t in (self.t_telop, self.t_zoom, self.t_bgm):
             t.setRowCount(0)
         if not plan:
@@ -1231,22 +1465,28 @@ class ReviewPage(QWidget):
         self.plan_note.setText("行をクリックするとその場面を再生します。チェックを外したものは使いません。"
                                "変更は「試し書き出し」「完成動画を書き出す」のときに反映されます。")
         moods = {m: MOOD_JA[m] for m in MOOD_JA}
-        for t in plan.get("telops", []):
+        off = plan.get("_off") or {}   # 手直しでチェックを外したもの（書き出しには使わない）
+        start = {c["id"]: c["start"] for c in self.chunks}
+
+        def merged(key, idk):
+            rows = [(x, True) for x in plan.get(key, [])] + [(x, False) for x in off.get(key, [])]
+            return sorted(rows, key=lambda r: start.get(r[0].get(idk), 0))
+        for t, on in merged("telops", "start_id"):
             c = self._chunk(t["start_id"]) or {"start": 0, "text": ""}
             r = self.t_telop.rowCount()
             self.t_telop.insertRow(r)
-            chk = self._check(t["start_id"])
+            chk = self._check(t["start_id"], on)
             chk.setData(Qt.UserRole + 1, t["end_id"])
             self.t_telop.setItem(r, 0, chk)
             self.t_telop.setItem(r, 1, self._ro(fmt(c["start"])))
             self.t_telop.setItem(r, 2, QTableWidgetItem(t["text"]))
             self.t_telop.setCellWidget(r, 3, self._combo(STYLE_JA, t.get("style", "emphasis")))
             self.t_telop.setCellWidget(r, 4, self._combo(SE_JA, t.get("se", "none")))
-        for z in plan.get("zooms", []):
+        for z, on in merged("zooms", "id"):
             c = self._chunk(z["id"]) or {"start": 0, "text": ""}
             r = self.t_zoom.rowCount()
             self.t_zoom.insertRow(r)
-            self.t_zoom.setItem(r, 0, self._check(z["id"]))
+            self.t_zoom.setItem(r, 0, self._check(z["id"], on))
             self.t_zoom.setItem(r, 1, self._ro(fmt(c["start"])))
             self.t_zoom.setItem(r, 2, self._ro(c["text"]))
             self.t_zoom.setCellWidget(r, 3, self._combo({"small": "弱め", "medium": "強め"}, z.get("strength", "small")))
@@ -1265,19 +1505,22 @@ class ReviewPage(QWidget):
         self._update_buttons()
 
     def _collect_plan(self) -> dict:
-        plan = {"telops": [], "zooms": [], "bgm": []}
+        """表の内容を演出プランにする。チェックを外したものは "_off" に入れておく（書き出しでは使わない）"""
+        plan = {"telops": [], "zooms": [], "bgm": [], "_off": {"telops": [], "zooms": []}}
         for r in range(self.t_telop.rowCount()):
             it = self.t_telop.item(r, 0)
-            if it.checkState() == Qt.Checked and self.t_telop.item(r, 2).text().strip():
-                plan["telops"].append({
-                    "start_id": it.data(Qt.UserRole), "end_id": it.data(Qt.UserRole + 1),
-                    "text": self.t_telop.item(r, 2).text().strip(),
-                    "style": self.t_telop.cellWidget(r, 3).currentData(),
-                    "se": self.t_telop.cellWidget(r, 4).currentData()})
+            row = {"start_id": it.data(Qt.UserRole), "end_id": it.data(Qt.UserRole + 1),
+                   "text": self.t_telop.item(r, 2).text().strip(),
+                   "style": self.t_telop.cellWidget(r, 3).currentData(),
+                   "se": self.t_telop.cellWidget(r, 4).currentData()}
+            if it.checkState() == Qt.Checked and row["text"]:
+                plan["telops"].append(row)
+            else:
+                plan["_off"]["telops"].append(row)
         for r in range(self.t_zoom.rowCount()):
             it = self.t_zoom.item(r, 0)
-            if it.checkState() == Qt.Checked:
-                plan["zooms"].append({"id": it.data(Qt.UserRole), "strength": self.t_zoom.cellWidget(r, 3).currentData()})
+            row = {"id": it.data(Qt.UserRole), "strength": self.t_zoom.cellWidget(r, 3).currentData()}
+            (plan["zooms"] if it.checkState() == Qt.Checked else plan["_off"]["zooms"]).append(row)
         for r in range(self.t_bgm.rowCount()):
             plan["bgm"].append({"start_id": self.t_bgm.item(r, 0).data(Qt.UserRole),
                                 "mood": self.t_bgm.cellWidget(r, 2).currentData()})
@@ -1296,7 +1539,12 @@ class ReviewPage(QWidget):
             return
         p = self.out / "plan_edited.json"
         p.write_text(json.dumps(self._collect_plan(), ensure_ascii=False, indent=1), encoding="utf-8")
-        args = [str(self.out), "--template", self._template(), "--plan", str(p)]
+        # --llm は書き出し後のサムネイル案で使う（「Claude APIで自動」なら AI が画像を見て選ぶ）
+        llm = self.win.create.llm.currentData()
+        if llm == "api" and not has_api_key(self.win.settings):
+            llm = "none"
+        args = [str(self.out), "--template", self._template(), "--plan", str(p), "--llm", llm,
+                "--effort", self.win.create.effort.currentData()]
         if preview:
             args += ["--preview", "60"]
         name = f"{self.sess['stem']}_{'プレビュー' if preview else '完成'}.mp4"
@@ -1333,6 +1581,8 @@ class ReviewPage(QWidget):
         if text is None and list(tdir.glob("thumb_*.jpg")):
             ThumbDialog(self, tdir).exec()
             return
+        if not text and not self.win.check_api_key(self.win.create.llm.currentData()):
+            return
         args = [str(self.out), "--template", self._template(),
                 "--llm", self.win.create.llm.currentData(), "--effort", self.win.create.effort.currentData()]
         if text:
@@ -1345,6 +1595,11 @@ class ReviewPage(QWidget):
         self.win.runner.start("thumbs.py", args, "サムネイル案を作成中", done)
 
     def _update_buttons(self):
+        if self.win.runner.busy:   # 処理中は押せないようにする（押せない理由が見て分かるように）
+            for b in (self.b_apply, self.b_xml, self.b_plan, self.b_prev, self.b_final, self.b_play, self.b_thumb,
+                      self.b_yt):
+                b.setEnabled(False)
+            return
         has = self.out is not None
         has_plan = has and (self.out / "plan_used.json").exists()
         for b in (self.b_apply, self.b_xml, self.b_plan):
@@ -1382,7 +1637,26 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(split)
         self.tools_menu = self.menuBar().addMenu("ツール")
         self.help_menu = self.menuBar().addMenu("ヘルプ")
+        self.runner.busy_changed.connect(self._busy_changed)
         self.load_extensions()
+        # 拡張が何も追加しなかったメニューは、空のまま出さない
+        for m in (self.tools_menu, self.help_menu):
+            m.menuAction().setVisible(bool(m.actions()))
+
+    def check_api_key(self, llm: str) -> bool:
+        """AIを「Claude APIで自動」にしているのにキーがないときは、先に知らせて止める"""
+        if llm == "api" and not has_api_key(self.settings):
+            QMessageBox.information(self, "APIキーが未設定です",
+                                    "「作成」タブの「APIキーを設定…」から設定するか、AIの欄で"
+                                    "「claude.ai に貼り付けて使う」または「AIを使わない」を選んでください。")
+            return False
+        return True
+
+    def _busy_changed(self, busy: bool):
+        """処理中は、別の処理を始めるボタンを押せないようにする"""
+        for b in (self.create.btn_rough, self.create.btn_full):
+            b.setEnabled(not busy)
+        self.review._update_buttons()
 
     def load_extensions(self):
         """gui_ext_*.py を読み込む。各ファイルは register(win) を持ち、メニュー・タブ・ボタンを追加する。
@@ -1396,14 +1670,22 @@ class MainWindow(QMainWindow):
         """
         import importlib
         self.extensions = []
+        failed = []
         for f in sorted(APP_DIR.glob("gui_ext_*.py")):
             try:
                 mod = importlib.import_module(f.stem)
                 mod.register(self)
                 self.extensions.append(f.stem)
             except Exception as e:  # noqa: BLE001
-                (APP_DIR / "gui_error.log").write_text(traceback.format_exc(), encoding="utf-8")
+                with open(APP_DIR / "gui_error.log", "a", encoding="utf-8") as fp:
+                    fp.write(f"===== 拡張 {f.stem} =====\n{traceback.format_exc()}\n")
                 print(f"拡張 {f.stem} を読み込めませんでした: {e}", file=sys.stderr)
+                self.runner.log.appendPlainText(f"[注意] 拡張 {f.name} を読み込めませんでした: {e}")
+                failed.append(f.name)
+        if failed:
+            # pythonw で起動していると stderr は見えないので、画面の下に出す
+            self.statusBar().showMessage(f"拡張機能 {'・'.join(failed)} を読み込めませんでした"
+                                         f"（詳細: gui_error.log）。ほかの機能はそのまま使えます。")
 
     # 荒編集の実行（手動モードの貼り付けにも対応）
     def run_roughcut(self, out: Path, args: list[str], llm: str, then_finish: bool, template: str,
@@ -1444,7 +1726,7 @@ class MainWindow(QMainWindow):
                 self, "実行中です", "処理を中止して終了しますか？") != QMessageBox.Yes:
             e.ignore()
             return
-        self.runner.stop()
+        self.runner.stop(wait=True)
         self.create.save_settings()
         e.accept()
 
@@ -1452,8 +1734,11 @@ class MainWindow(QMainWindow):
 def _make_plan_and_render(self: ReviewPage):
     """「完成まで一気に作る」：プラン作成 → そのまま書き出し"""
     llm = self.win.create.llm.currentData()
+    if not self.win.check_api_key(llm):
+        return
     if llm == "manual":
-        self.make_plan()   # 貼り付け画面が出るので、書き出しは確認後に手動で
+        # 貼り付け画面で演出プランを受け取ったら、そのまま完成動画の書き出しまで進める
+        self.make_plan(then=lambda: self.render(preview=False))
         return
     args = [str(self.out), "--template", self._template(), "--llm", llm,
             "--effort", self.win.create.effort.currentData()]

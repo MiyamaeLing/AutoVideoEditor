@@ -66,15 +66,21 @@ def main():
         print("  ※ 審査（audit）前のプロジェクトでは、この動画は非公開にロックされます。")
         return
 
-    vid = args.video_id or meta.get("video_id")
+    vid = (args.video_id or "").strip() or meta.get("video_id")
+    cand_path = args.out_dir / "youtube_candidates.json"
+    cand_path.unlink(missing_ok=True)
     if not vid:
         uploads = yt_mod.recent_uploads(yt)
         hit = yt_mod.guess_video(uploads, meta["video"])
         if not hit:
-            print("[エラー] ファイル名と同じタイトルの動画が見つかりませんでした。最近の動画:")
+            # 画面（GUI）はこの一覧を読んで、どの動画に設定するかを選ばせる
+            cand_path.write_text(json.dumps(uploads[:20], ensure_ascii=False, indent=1), encoding="utf-8")
+            print(f"[エラー] 「{Path(meta['video']).stem}」というタイトルの動画が見つかりませんでした"
+                  "（Studio でタイトルを変えた場合などに起こります）。最近の動画:")
             for u in uploads[:10]:
                 print(f"  {u['id']}  {u['title']}")
-            sys.exit("  --video-id で動画のIDを指定してください。")
+            sys.exit("  画面から使っている場合は、表示される一覧から動画を選ぶか「動画ID」欄に入れてください。\n"
+                     "  コマンドの場合は --video-id で動画のIDを指定してください。")
         vid = hit["id"]
         print(f"  対象の動画: {hit['title']}（{vid}）")
     yt_mod.apply_meta(yt, vid, meta)

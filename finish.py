@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import os
 import shutil
 import sys
 import time
@@ -25,6 +26,7 @@ if sys.platform == "win32":
         pass
 
 import rc_win  # noqa: F401
+import rc_chapters
 import rc_llm
 import rc_plan
 import rc_render
@@ -75,15 +77,41 @@ def split_by_zoom(tl: Timeline, zooms: list[tuple[float, float, float]]) -> list
 
 
 def avoid_chapter_cards(telops, chapters, card_dur):
-    """章カードの表示中に出るテロップは、カードが消えた後にずらす（短くなりすぎるものは出さない）"""
+    """章カードの表示中に出るテロップは、カードが消えた後にずらす（短くなりすぎるものは出さない）
+
+    telops の各要素は (開始, 終了, ...) 。3つ目以降（文字・種類・効果音など）はそのまま引き継ぐ。
+    """
     out = []
-    for s, e, text, style in telops:
+    for s, e, *rest in telops:
         for t, _ in chapters:
             if t - 0.2 < s < t + card_dur:
                 s = t + card_dur + 0.1
         if e - s >= 1.2:
-            out.append((s, e, text, style))
+            out.append((s, e, *rest))
     return out
+
+
+def clear_work(work: Path) -> None:
+    """前回の作業フォルダを消す。使用中で消せないときは、分かりやすく伝えて止める。"""
+    if not work.exists():
+        return
+    for _ in range(5):
+        try:
+            shutil.rmtree(work)
+            return
+        except OSError:
+            time.sleep(1.0)   # 中止した直後は、FFmpeg がファイルを放すまで少しかかることがある
+    sys.exit(f"[エラー] 作業フォルダを消せませんでした: {work}\n"
+             "  前の書き出しの FFmpeg がまだ動いているか、ほかのアプリがファイルを開いています。\n"
+             "  少し待ってからもう一度実行してください。直らないときは PC を再起動してください。")
+
+
+def thumb_llm(llm: str) -> str:
+    """書き出し後のサムネイル案で AI を使うか。--llm の指定に従う（APIキーがなければ自動で選ぶ）"""
+    if llm == "api" and not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
+        print("  [お知らせ] APIキーが設定されていないので、サムネイルの場面は自動で選びます。")
+        return "none"
+    return llm
 
 
 def clip_seg(path: Path, fps: Fraction) -> rc_render.Seg:
@@ -95,6 +123,7 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
         plan_only: bool = False, thumbs: bool = True) -> Path | None:
     require_ffmpeg()
     t0 = time.time()
+    out_dir = Path(out_dir).resolve()   # FFmpeg は作業フォルダで動かすので、相対パスのままだと迷子になる
     sess_path = out_dir / "session.json"
     if not sess_path.exists():
         sys.exit(f"[エラー] {sess_path} がありません。先に roughcut.py を実行してください。")
@@ -137,6 +166,9 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
     else:
         plan = rc_plan.default_plan(items, moods)
     plan = rc_plan.sanitize(plan, set(span), moods)
+    edited = out_dir / "plan_edited.json"
+    if edited.exists() and not (plan_file and Path(plan_file).resolve() == edited.resolve()):
+        edited.unlink()   # 新しいプランを使うので、前のプランへの手直し（画面の表）は使わない
     (out_dir / "plan_used.json").write_text(json.dumps(plan, ensure_ascii=False, indent=1), encoding="utf-8")
     if plan_only:
         print(f"■ 演出プランを作りました: {out_dir / 'plan_used.json'}")
@@ -187,13 +219,15 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
         e = min(e, s + 6.0)
         if not inside(s):
             continue
-        telops.append((s + off, min(e, body_dur) + off, t["text"], t["style"]))
-        if t.get("se", "none") != "none":
-            f = tpl.se_file(t["se"])
-            if f:
-                se_events.append((s + off, f))
-    chapters = [(c["t"] + off, c["title"]) for c in sess.get("chapters", []) if c["t"] > 0.5 and inside(c["t"])]
+        se = tpl.se_file(t["se"]) if t.get("se", "none") != "none" else None
+        telops.append((s + off, min(e, body_dur) + off, t["text"], t["style"], se))
+    # チャプターは発言IDから、この書き出しのタイムライン（出力fps）で時刻を求め直す
+    sess_chapters = rc_chapters.retime(sess.get("chapters", []), tl, by_id)
+    chapters = [(c["t"] + off, c["title"]) for c in sess_chapters if c["t"] > 0.5 and inside(c["t"])]
     telops = avoid_chapter_cards(telops, chapters, tpl.get("chapter_card", {}).get("duration", 2.5))
+    # 効果音は、章カードを避けてずらした後のテロップの時刻で鳴らす（出さないテロップの音は鳴らさない）
+    se_events = [(s, f) for s, _e, _t, _st, f in telops if f]
+    telops = [(s, e, text, style) for s, e, text, style, _f in telops]
 
     # ---- BGM ----
     bgm_files = tpl.bgm_files()
@@ -209,8 +243,7 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
 
     # ---- 書き出し ----
     work = out_dir / "work"
-    if work.exists():
-        shutil.rmtree(work)
+    clear_work(work)
     work.mkdir()
     final_args, inter_args, enc = rc_render.pick_encoder(tpl["video"].get("encoder", "auto"),
                                                          int(tpl["video"].get("quality", 19)))
@@ -233,7 +266,7 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
         # 完成動画に合わせた字幕とチャプター（オープニングの分もずらしてある）。YouTube への設定で使う
         write_srt(out_dir / f"{stem}_完成.srt", caps)
         final_chapters = ([{"t": 0.0, "title": "オープニング"}] if off > 0 else []) + \
-            [{"t": round(c["t"] + off, 2), "title": c["title"]} for c in sess.get("chapters", [])]
+            [{"t": round(c["t"] + off, 2), "title": c["title"]} for c in sess_chapters]
         (out_dir / "final_info.json").write_text(json.dumps({
             "video": str(out_path), "duration": round(total, 2), "intro_offset": round(off, 2),
             "chapters": final_chapters, "srt": str(out_dir / f"{stem}_完成.srt"),
@@ -242,7 +275,7 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
     if thumbs and not preview:
         try:
             import rc_thumb
-            rc_thumb.generate(out_dir, tpl, "api" if llm == "api" and not plan_file else "none", effort)
+            rc_thumb.generate(out_dir, tpl, thumb_llm(llm), effort)
         except (Exception, SystemExit) as e:  # noqa: BLE001  サムネイルの失敗で全体を止めない
             print(f"  [注意] サムネイル案を作れませんでした: {e}")
 

@@ -21,6 +21,7 @@ if sys.platform == "win32":
         pass
 
 import rc_win  # noqa: F401  (Windowsでコンソール画面を出さない)
+import rc_chapters
 import rc_llm
 from rc_export import build_captions, write_srt, write_xmeml
 from rc_media import SourceSet, probe, require_ffmpeg
@@ -80,6 +81,7 @@ def main():
 
     stem = args.inputs[0].stem
     out = args.out or args.inputs[0].parent / f"{stem}_roughcut"
+    out = out.resolve()   # 相対パスでも、仕上げ（作業フォルダで FFmpeg を動かす）で迷わないように
     out.mkdir(parents=True, exist_ok=True)
     glossary = []
     if args.glossary:
@@ -175,7 +177,8 @@ def main():
         if r["id"] in by_id:
             add_marker(by_id[r["id"]].start, "要確認", f"{r['note']}｜{by_id[r['id']].text}")
     if not preset["apply_ai_cuts"]:
-        for i in sorted(ai_cut_ids - cut_ids - manual_keep):
+        # 「残す」に決めた候補も、Premiere で見直せるように印は残す（屋外モードは元々すべて残すため）
+        for i in sorted(ai_cut_ids - cut_ids):
             c, info = by_id[i], cut_info[i]
             add_marker(c.start, f"カット候補: {TYPE_JA.get(info['type'], info['type'])}", f"{info['reason']}｜{c.text}")
     for s, e in silent_work:
@@ -184,13 +187,14 @@ def main():
 
     # ---- 字幕 ----
     corr = {c["id"]: c["text"] for c in decisions.get("corrections", []) if c.get("id") in by_id}
-    items = []
+    items, item_ids = [], []
     for c in chunks:
         if c.id in cut_ids:
             continue
         text = corr.get(c.id, c.text)
         for s, e in tl.map_range(c.start, c.end):
             items.append((s, e, text))
+            item_ids.append(c.id)
     caps = build_captions(items, args.caption_chars)
     write_srt(out / f"{stem}_字幕.srt", caps)
 
@@ -199,24 +203,23 @@ def main():
     write_xmeml(xml_path, f"{stem}_荒編集", tl, markers, cam2, offset)
 
     # ---- タイトル・概要欄・チャプター ----
-    meta_items, prev = [], -999.0
-    for s, e, t in items:   # 10秒ごとくらいに1行にまとめる
-        if meta_items and s - prev < 10:
-            meta_items[-1] = (meta_items[-1][0], meta_items[-1][1] + " " + t)
-        else:
-            meta_items.append((s, t))
-            prev = s
+    meta_items, line_ids = rc_chapters.build_lines(items, item_ids)   # 10秒ごとくらいに1行にまとめる
     meta = {}
     if args.meta:
         meta = load_json_loose(args.meta)
+        # claude.ai の返答の行番号は、プロンプトを作ったときの行。そのときの対応表があれば使う
+        rc_chapters.attach_ids(meta, line_ids, rc_chapters.load_lines(out))
     elif args.llm == "api":
         meta, usage = rc_llm.generate_meta_api(meta_items, args.mode, args.effort)
         for k in usage_total:
             usage_total[k] += usage[k]
+        rc_chapters.attach_ids(meta, line_ids)
     elif args.llm == "manual":
         rc_llm.write_manual_meta_prompt(meta_items, args.mode, out / "prompt_youtube.md")
+        rc_chapters.save_lines(out, line_ids)
+    chapters = rc_chapters.resolve(meta, tl, by_id)
 
-    write_youtube_md(out / "youtube.md", meta, meta_items)
+    write_youtube_md(out / "youtube.md", meta, chapters)
     write_report(out / "report.md", src, tl, chunks, cut_ids, cut_info, ai_cut_ids, preset, decisions, by_id)
 
     # 仕上げ工程（finish.py）に引き継ぐ情報
@@ -230,13 +233,13 @@ def main():
             "caption_chars": args.caption_chars,
         },
         "stem": stem,
-        "inputs": [str(f.path) for f in src.files],
+        "inputs": [str(f.path.resolve()) for f in src.files],
         "keep": keep,
         "cut_ids": sorted(cut_ids),
         "corrections": {str(k): v for k, v in corr.items()},
         "markers": [{"t": t, "name": n, "comment": c} for t, n, c in markers],
         "meta": meta,
-        "chapters": resolve_chapters(meta, meta_items),
+        "chapters": chapters,   # 発言ID（id）と元素材の時刻（src）付き。カットを変えても同じ発言を指す
     }
     (out / "session.json").write_text(json.dumps(session, ensure_ascii=False, indent=1), encoding="utf-8")
 
@@ -257,30 +260,14 @@ def main():
         finish.run(out, template=args.template, llm=args.llm, effort=args.effort)
 
 
-def resolve_chapters(meta: dict, items) -> list[dict]:
-    """AIが返したチャプター（行番号）を、編集後の時刻に直す。最初は必ず0秒。"""
-    out = []
-    for ch in sorted(meta.get("chapters", []), key=lambda c: c["line"]):
-        idx = ch["line"] - 1
-        if 0 <= idx < len(items):
-            out.append({"t": 0.0 if not out else round(items[idx][0], 2), "title": ch["title"]})
-    return out
-
-
-def write_youtube_md(path: Path, meta: dict, items):
+def write_youtube_md(path: Path, meta: dict, chapters: list[dict]):
     if not meta:
         return
     lines = ["# 投稿用の情報（AI案）", "", "## タイトル案"]
     lines += [f"- {t}" for t in meta.get("titles", [])]
     lines += ["", "## 概要欄", "", meta.get("description", ""), "", "## チャプター（概要欄にそのまま貼れます）", ""]
-    seen = False
-    for ch in sorted(meta.get("chapters", []), key=lambda c: c["line"]):
-        idx = ch["line"] - 1
-        if not 0 <= idx < len(items):
-            continue
-        t = 0.0 if not seen else items[idx][0]
-        seen = True
-        lines.append(f"{fmt_ts(t)} {ch['title']}")
+    for ch in chapters:
+        lines.append(f"{fmt_ts(ch['t'])} {ch['title']}")
     lines += ["", "## サムネイル文字案"] + [f"- {t}" for t in meta.get("thumbnail_texts", [])]
     lines += ["", "## タグ", "", ", ".join(meta.get("tags", []))]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
