@@ -47,8 +47,29 @@ def _file_xml(fid: str, f: MediaInfo, defined: set) -> str:
     )
 
 
+def _v2_parts(p, shots):
+    """1クリップの区間を、手元カメラを使う所（True）と使わない所（False）に分ける。shots が None なら分けない"""
+    if shots is None:
+        return [(p.g_in, p.g_out, True)]
+    cuts = sorted({p.g_in, p.g_out} | {b for s, e in shots for b in (s, e) if p.g_in < b < p.g_out})
+    return [(a, b, any(s <= (a + b) / 2 < e for s, e in shots)) for a, b in zip(cuts, cuts[1:]) if b > a]
+
+
+def _fit_motion(f: MediaInfo, w: int, h: int) -> str:
+    """縦横比が違う2台目の映像を、画面に収まる大きさにする（Premiere の「モーション → スケール」）"""
+    if (f.width, f.height) == (w, h) or not f.width or not f.height:
+        return ""
+    scale = min(w / f.width, h / f.height) * 100
+    return ("<filter><effect><name>Basic Motion</name><effectid>basic</effectid><effectcategory>motion</effectcategory>"
+            "<effecttype>motion</effecttype><mediatype>video</mediatype>"
+            '<parameter authoringApp="PremierePro"><parameterid>scale</parameterid><name>Scale</name>'
+            f"<valuemin>0</valuemin><valuemax>1000</valuemax><value>{scale:.2f}</value></parameter></effect></filter>")
+
+
 def write_xmeml(path: Path, name: str, tl: Timeline, markers: list[tuple[float, str, str]],
-                cam2: SourceSet | None = None, cam2_offset: float = 0.0) -> None:
+                cam2: SourceSet | None = None, cam2_offset: float = 0.0,
+                cam2_shots: list[tuple[float, float]] | None = None) -> None:
+    """cam2_shots（元素材の時刻）を渡すと、その区間だけ V2（2台目カメラ）のクリップを有効にする"""
     src = tl.sources
     seq_fps = tl.fps
     main = src.main
@@ -75,28 +96,32 @@ def write_xmeml(path: Path, name: str, tl: Timeline, markers: list[tuple[float, 
                 f"<sourcetrack><mediatype>audio</mediatype><trackindex>{ch+1}</trackindex></sourcetrack>{links}</clipitem>"
             )
 
-    # 2台目カメラ：同じカットで V2 に並べる（初期状態は非表示）
+    # 2台目カメラ：同じカットで V2 に並べる（初期状態は非表示。cam2_shots があれば、その区間だけ有効）
     v2_items = []
     if cam2 is not None:
         c2_ids = [f"file-cam2-{i+1}" for i in range(len(cam2.files))]
-        for idx, p in enumerate(tl.pieces):
-            s2, e2 = p.g_in + cam2_offset, p.g_out + cam2_offset
+        parts = [(p, g_a, g_b, on) for p in tl.pieces for g_a, g_b, on in _v2_parts(p, cam2_shots)]
+        for p, g_a, g_b, on in parts:
+            s2, e2 = g_a + cam2_offset, g_b + cam2_offset
             seq_base = p.seq_start
+            part_end = p.seq_end if g_b >= p.g_out else seq_base + round((g_b - p.g_in) * seq_fps)
             for fi, ls, le in cam2.split(max(s2, 0), max(e2, 0)):
                 f2 = cam2.files[fi]
                 g_start = cam2.offsets[fi] + ls - cam2_offset  # main基準の全体時刻
                 st = seq_base + round((g_start - p.g_in) * seq_fps)
                 fin, fout = round(ls * f2.fps), min(round(le * f2.fps), f2.frames)
                 en = st + round((fout - fin) * seq_fps / f2.fps)
-                en = min(en, p.seq_end)
+                en = min(en, part_end)
                 if en <= st or fout <= fin:
                     continue
                 cid = ids.next("clipitem-cam2")
+                motion = _fit_motion(f2, main.width, main.height) if cam2_shots is not None else ""
                 v2_items.append(
-                    f'<clipitem id="{cid}"><name>{escape(f2.path.name)}</name><enabled>TRUE</enabled>'
+                    f'<clipitem id="{cid}"><name>{escape(f2.path.name)}</name>'
+                    f"<enabled>{'TRUE' if on else 'FALSE'}</enabled>"
                     f"<duration>{f2.frames}</duration>{_rate(f2.fps)}<start>{st}</start><end>{en}</end>"
                     f"<in>{fin}</in><out>{fin + round((en - st) * f2.fps / seq_fps)}</out>"
-                    f"{_file_xml(c2_ids[fi], f2, defined)}</clipitem>"
+                    f"{_file_xml(c2_ids[fi], f2, defined)}{motion}</clipitem>"
                 )
 
     mk = "".join(
@@ -109,7 +134,8 @@ def write_xmeml(path: Path, name: str, tl: Timeline, markers: list[tuple[float, 
            f"<fielddominance>none</fielddominance></samplecharacteristics></format>")
     v_tracks = f"<track>{''.join(v_items)}<enabled>TRUE</enabled><locked>FALSE</locked></track>"
     if v2_items:
-        v_tracks += f"<track>{''.join(v2_items)}<enabled>FALSE</enabled><locked>FALSE</locked></track>"
+        v2_on = "TRUE" if cam2_shots is not None else "FALSE"   # 区間を選んだときは、選んだクリップだけ映る
+        v_tracks += f"<track>{''.join(v2_items)}<enabled>{v2_on}</enabled><locked>FALSE</locked></track>"
     a_tracks = "".join(
         f"<track>{''.join(items)}<enabled>TRUE</enabled><locked>FALSE</locked>"
         f"<outputchannelindex>{ch+1}</outputchannelindex></track>"

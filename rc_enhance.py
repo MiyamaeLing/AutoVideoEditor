@@ -551,7 +551,9 @@ def detect_cmd(segs, w: int, h: int, fps: Fraction, out_name: str, pre_chain) ->
         # 早送りの区間（rc_speedup）は、素材を倍率ぶん長く読む（書き出しと同じ読み方）
         speed = Fraction(getattr(s, "speed", 1.0) or 1.0).limit_denominator(1000)
         dur = s.frames / fps * speed + Fraction(1, 10)
-        cmd += ["-ss", f"{s.start:.4f}", "-t", f"{float(dur):.4f}", "-i", str(s.path)]
+        # 2台目カメラの区間（rc_multicam）は、映像のファイル（video）を解析する
+        vpath, vstart = (s.video, s.video_start) if getattr(s, "video", None) is not None else (s.path, s.start)
+        cmd += ["-ss", f"{vstart:.4f}", "-t", f"{float(dur):.4f}", "-i", str(vpath)]
         # 書き出しと同じフレームを解析するため、フレーム数も同じところで切る
         parts.append(f"[{j}:v]{pre_chain(s)},{s.fx.detect(trf_name(out_name, i))}[d{j}]")
         maps += ["-map", f"[d{j}]", "-f", "null", "-"]
@@ -606,6 +608,13 @@ class StabPipeline:
         self.procs.clear()
 
 
+def _video_of(s) -> tuple[Path, float]:
+    """区間の映像のファイルと開始秒（2台目カメラの区間は video の方）"""
+    if getattr(s, "video", None) is not None:
+        return Path(s.video), float(s.video_start)
+    return Path(s.path), float(s.start)
+
+
 def apply_video(st: Settings, segs, work: Path, fps: Fraction) -> None:
     """本編の区間（rc_render.Seg）に映像の補正を割り当てる。オープニング・エンディングには付けない"""
     if not (st.color or st.stab):
@@ -614,10 +623,10 @@ def apply_video(st: Settings, segs, work: Path, fps: Fraction) -> None:
     if st.color:
         files: dict[Path, list[float]] = {}
         for s in segs:
-            files.setdefault(Path(s.path), []).append(s.start + float(s.frames / fps) / 2)
+            files.setdefault(_video_of(s)[0], []).append(_video_of(s)[1] + float(s.frames / fps) / 2)
         cubes = build_color_cubes(st.color, files, work)
     for s in segs:
-        s.fx = VideoFx(cube=cubes.get(Path(s.path), ""), stab=(st.stab or {}).get("method", ""),
+        s.fx = VideoFx(cube=cubes.get(_video_of(s)[0], ""), stab=(st.stab or {}).get("method", ""),
                        strength=(st.stab or {}).get("strength", 0.5), fps=float(fps))
 
 

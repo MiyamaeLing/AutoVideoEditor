@@ -29,6 +29,7 @@ if sys.platform == "win32":
 import rc_win  # noqa: F401
 import rc_chapters
 import rc_llm
+import rc_multicam
 import rc_plan
 import rc_render
 import rc_enhance
@@ -178,8 +179,12 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
         plan = rc_plan.default_plan(items, moods)
     speedups = rc_speedup.sanitize(plan, works, by_id, sp_cfg)
     plan = rc_plan.sanitize(plan, set(span), moods)
+    for k in ("speedups", "speedups_auto"):   # 早送りは rc_speedup.sanitize の結果だけを使う
+        plan.pop(k, None)
     if works or speedups:
         plan.update(rc_speedup.plan_for_save(speedups))
+    # 2台目カメラがあれば、手元カメラを使う場面（plan["angles"]）を用意する（無ければ None）
+    mc = rc_multicam.prepare(out_dir, sess, tl, chunks, plan, tpl, llm, effort, usage)
     edited = out_dir / "plan_edited.json"
     if edited.exists() and not (plan_file and Path(plan_file).resolve() == edited.resolve()):
         edited.unlink()   # 新しいプランを使うので、前のプランへの手直し（画面の表）は使わない
@@ -207,6 +212,7 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
         ftl = rc_speedup.SpeedTimeline(tl, plan["speedups"], zooms, sp_cfg["audio"], sp_cfg["audio_volume_db"])
         items, span = rc_speedup.retime_items(chunks, cut, corr, ftl, span)
     segs = ftl.segs if ftl is not tl else split_by_zoom(tl, zooms)
+    segs = rc_multicam.apply_segs(segs, src, fps, mc, w, h)   # 手元カメラの区間は映像を2台目に差し替える
     body_frames = sum(s.frames for s in segs)
     if preview:
         keep_frames, out = round(preview * fps), []

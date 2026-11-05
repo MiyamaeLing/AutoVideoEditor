@@ -182,7 +182,11 @@ def t_render(check, out: Path, fx: Path):
           and abs(sw[0][1] - WORK[1]) < 0.01, str(sw))
 
     # plan.json には speedups がない → 自動で早送り
-    p = _run(["finish.py", str(cd), "--template", str(fx / "tpl"), "--plan", str(fx / "plan.json"), "--llm", "none",
+    # （2台目カメラへの切り替え（rc_multicam）は止めて、早送りだけを確かめる。組み合わせは test_integration）
+    plan_in = cd / "plan_in.json"
+    plan_in.write_text(json.dumps({**json.loads((fx / "plan.json").read_text(encoding="utf-8")), "angles": []},
+                                  ensure_ascii=False), encoding="utf-8")
+    p = _run(["finish.py", str(cd), "--template", str(fx / "tpl"), "--plan", str(plan_in), "--llm", "none",
               "--keep-work"])
     if p.returncode != 0:
         check("早送り: 書き出し", False, _tail(p))

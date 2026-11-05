@@ -200,7 +200,11 @@ def main():
 
     # ---- XML ----
     xml_path = out / f"{stem}_荒編集.xml"
-    write_xmeml(xml_path, f"{stem}_荒編集", tl, markers, cam2, offset)
+    cam2_shots = None   # 演出プランで手元カメラを選んだ区間があれば、その所だけ V2 を有効にする
+    if cam2 is not None:
+        import rc_multicam
+        cam2_shots = rc_multicam.xml_shots(out, tl, cam2, offset, args.template)
+    write_xmeml(xml_path, f"{stem}_荒編集", tl, markers, cam2, offset, cam2_shots)
 
     # ---- タイトル・概要欄・チャプター ----
     meta_items, line_ids = rc_chapters.build_lines(items, item_ids)   # 10秒ごとくらいに1行にまとめる
