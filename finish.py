@@ -252,7 +252,10 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
     body = rc_render.render_body(all_segs, w, h, fps, work, inter_args)
     print("    音声のミックス（BGM・効果音・音量の調整）", flush=True)
     loud = rc_render.mix_audio(body, total, sections, se_events, tpl, work)
-    (work / "subs.ass").write_text(build_ass(tpl, w, h, caps, telops, chapters), encoding="utf-8")
+    # 話者の区別（実験的な機能）：speakers.json があれば、字幕を人ごとの色にする
+    import rc_speakers
+    caps_ass = rc_speakers.decorate_captions(out_dir, tpl, items, max_chars, off, inside) or caps
+    (work / "subs.ass").write_text(build_ass(tpl, w, h, caps_ass, telops, chapters), encoding="utf-8")
     logo = tpl.path(tpl.get("logo", {}).get("file", ""))
     stem = sess["stem"]
     out_path = out_dir / (f"{stem}_プレビュー.mp4" if preview else f"{stem}_完成.mp4")

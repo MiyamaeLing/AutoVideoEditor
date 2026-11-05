@@ -109,6 +109,8 @@ print('gui ok')
     # 追加・修正した機能のテスト（tests/test_*.py）
     import test_fixes
     test_fixes.run_all(check, out, fx)
+    import test_speakers   # 話者の区別（字幕の色分け）
+    test_speakers.run_all(check, out, fx)
 
     failed = [r for r in results if not r[1]]
     print(f"\n{len(results) - len(failed)}/{len(results)} 件 成功")

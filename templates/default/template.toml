@@ -118,3 +118,11 @@ outline_color = "#111111"   # 文字の縁取り（内側）
 outer_color = "#FFFFFF"     # 文字の縁取り（外側）
 accent_color = "#2B6CB0"    # 帯の色（「上に帯」のデザイン）
 layouts = ["bottom", "band", "side"]   # bottom=下に大きな文字 / band=上に帯 / side=横に文字
+
+# ---- 話者ごとの字幕の色（実験的な機能「話者の色分け」を使ったときだけ） ----
+[speakers]
+# 1人目（いちばん多く話している人）、2人目、3人目…の字幕の色。人数が多いときは最初の色に戻ります
+colors = ["#FFFFFF", "#FFE14D", "#7FDBFF", "#FF9AA2", "#9BE59B", "#D6A8FF"]
+outline_colors = ["#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A", "#1A1A1A"]
+caption_name = false        # true にすると、完成動画の字幕にも名前を出す（例: 「たろう：こんにちは」）
+srt_name_format = "{name}："  # 字幕に名前を入れるときの書き方（{name} が名前に置きかわる）
