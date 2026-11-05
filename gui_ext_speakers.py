@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 import rc_speakers
+import rc_theme
 
 LOW_SCORE = 0.1          # これより自信が低い発言は、黄色で「確認がおすすめ」と出す
 C_LOW = QColor("#FFF3C4")
@@ -68,7 +69,7 @@ class SpeakerDialog(QDialog):
                                     " QPushButton:disabled { background: #CBD5E0; color: #F7FAFC; }")
         self.b_detect.clicked.connect(self.detect)
         self.status = QLabel("")
-        self.status.setStyleSheet("color: #555;")
+        self.status.setProperty("role", "sub")
         top = QHBoxLayout()
         top.addWidget(QLabel("話している人数:"))
         top.addWidget(self.num)
@@ -255,8 +256,10 @@ class SpeakerDialog(QDialog):
         f.setBold(True)
         it.setFont(f)
         low = self._score(cid) < LOW_SCORE
+        rc = rc_theme.row_colors()   # 今のテーマの黄色と、その上で読める文字の色
         for c in (0, 2, 3):
-            self.t_utt.item(r, c).setBackground(QBrush(C_LOW) if low else QBrush())
+            self.t_utt.item(r, c).setBackground(QBrush(rc["warn"]) if low else QBrush())
+            self.t_utt.item(r, c).setForeground(QBrush(rc["fg"]) if low else QBrush())
 
     def _rebuild_assign_bar(self, cols: list[str]):
         while self.assign_bar.count():
@@ -373,9 +376,16 @@ class SpeakerDialog(QDialog):
                                             "完成動画に反映するには「完成動画を書き出す」を押してください。")
                 if ok and then:
                     then()
-            return self.win.runner.start("speakers.py", [str(self.out), "--no-detect", "--write-srt",
-                                                         "--template", self.review._template()],
-                                         "Premiere用の字幕を書き直し中", done)
+            started = self.win.runner.start("speakers.py", [str(self.out), "--no-detect", "--write-srt",
+                                                            "--template", self.review._template()],
+                                            "Premiere用の字幕を書き直し中", done)
+            if not started:   # ほかの処理が実行中で、字幕（SRT）はまだ古いまま → 「保存 ●」を残して知らせる
+                self.dirty = True
+                self._update_title()
+                QMessageBox.information(self, "字幕はまだ書き直していません",
+                                        "話者の設定は保存しましたが、ほかの処理が実行中のため、Premiere用の字幕（SRT）は"
+                                        "書き直せませんでした。\n処理が終わってから、もう一度「保存」を押してください。")
+            return started
         if not quiet:
             QMessageBox.information(self, "保存しました",
                                     "保存しました。完成動画に反映するには「完成動画を書き出す」を押してください。")
@@ -399,10 +409,18 @@ class SpeakerDialog(QDialog):
         if not self.win.runner.start("speakers.py", args, "話者を推定中（実験的な機能）", done):
             self.b_detect.setEnabled(True)
 
-    def closeEvent(self, e):
+    def _ask_save(self):
         if self.dirty and QMessageBox.question(self, "保存していません", "直した内容を保存しますか？") == QMessageBox.Yes:
             self.save(quiet=True)
+
+    def closeEvent(self, e):
+        self._ask_save()
         e.accept()
+
+    def reject(self):
+        """Esc で閉じたときも、保存の確認を出す（QDialog は Esc では closeEvent を通らないため）"""
+        self._ask_save()
+        super().reject()
 
 
 def open_dialog(win) -> SpeakerDialog | None:
@@ -425,3 +443,5 @@ def register(win):
     b.clicked.connect(lambda: open_dialog(win))
     win.review.ext_bar.insertWidget(0, b)
     win.speaker_button = b
+    if hasattr(win, "lock_while_busy"):
+        win.lock_while_busy(b, needs_out=True)   # 処理中・結果を開いていないときは押せない

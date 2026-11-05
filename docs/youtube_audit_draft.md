@@ -76,17 +76,23 @@ All requests are made with my own OAuth credentials and only for my own channel.
 | 動画を探す | channels.list / playlistItems.list / videos.list | 数回 |
 | タイトル等の設定 | videos.update | 1〜数回 |
 | サムネイル | thumbnails.set | 1回 |
-| 字幕（使う場合） | captions.insert | 1回 |
+| 字幕（使う場合） | captions.insert（日本語） | 設定を反映するたびに1回（約400ユニット） |
+| 翻訳した字幕（「英語字幕・英語タイトルも設定する」） | captions.list ＋ 言語ごとに captions.insert / captions.update | 反映するたびに list 1回（約50）＋ 言語ごとに1回（insert 約400 / update 約450） |
+| 翻訳したタイトル・概要欄 | videos.update（localizations） | 上の「タイトル等の設定」に含まれる |
 | 動画ごとアップロード（使う場合） | videos.insert | 1回 |
 | 公開後の分析 | YouTube Analytics API reports.query | 1本あたり2回 |
 | コメント | commentThreads.list / comments.insert | 数回 / 返信の数 |
+
+字幕は1回の反映で多く使います。例: 日本語＋翻訳5言語で「設定を反映」を1回押すと、字幕だけで約 50 ＋ 400 ＋ 5×400〜450 ≒ 2,500〜2,700 ユニット（ほかの処理を足すと約3,000）です。1日に3〜4回反映すると、初期値の 10,000 ユニットに届きます。割り当ての追加を頼むときは、この分も含めて計算してください。
 
 それぞれのユニット数は変わることがあるので、[Quota Calculator](https://developers.google.com/youtube/v3/determine_quota_cost) で最新の値を確認して書いてください。割り当ての追加を頼む場合は、「週に【N】本の動画を投稿し、1本あたり【N】ユニット使う」のように理由を書きます。
 
 英語の文例：
 ```
 I publish about 【N】 videos per week. Setting metadata, thumbnail and captions uses about
-【N】 units per video, and an upload uses about 【N】 units. Reading analytics and comments for
+【N】 units per video (captions are uploaded in Japanese and 【N】 translated languages; each
+captions.insert costs about 400 units and each captions.update about 450, and I may re-apply
+the settings a few times while checking the video), and an upload uses about 【N】 units. Reading analytics and comments for
 recent videos uses a small number of additional units per day.
 ```
 

@@ -122,8 +122,8 @@ def main():
     elif args.llm == "api":
         res, usage = rc_llm.analyze_cuts_api(chunks, args.mode, glossary, args.effort)
         decisions.update(res)
-        for k in usage_total:
-            usage_total[k] += usage[k]
+        for k in usage:
+            usage_total[k] = usage_total.get(k, 0) + usage[k]
     elif args.llm == "manual":
         prompt_path = out / "prompt_cuts.md"
         rc_llm.write_manual_cut_prompt(chunks, args.mode, glossary, prompt_path)
@@ -227,8 +227,8 @@ def main():
         rc_chapters.attach_ids(meta, line_ids, rc_chapters.load_lines(out))
     elif args.llm == "api":
         meta, usage = rc_llm.generate_meta_api(meta_items, args.mode, args.effort)
-        for k in usage_total:
-            usage_total[k] += usage[k]
+        for k in usage:
+            usage_total[k] = usage_total.get(k, 0) + usage[k]
         rc_chapters.attach_ids(meta, line_ids)
     elif args.llm == "manual":
         rc_llm.write_manual_meta_prompt(meta_items, args.mode, out / "prompt_youtube.md")

@@ -155,14 +155,64 @@ def _call(client, anthropic, system: str, user: str | list, schema: dict, effort
         fallbacks="default",
     ) as stream:
         msg = stream.get_final_message()
-    usage["in"] += msg.usage.input_tokens
-    usage["out"] += msg.usage.output_tokens
+    add_usage(usage, msg)
     if msg.stop_reason == "refusal":
         raise RuntimeError("Claudeがこのリクエストを処理できませんでした（refusal）。--llm manual を試してください。")
     if msg.stop_reason == "max_tokens":
         raise RuntimeError("出力が長すぎて途中で切れました。素材を分けて実行してください。")
-    text = next((b.text for b in msg.content if b.type == "text"), "")
-    return json.loads(text)
+    return parse_answer(msg.content)
+
+
+# 別のモデルに切り替わったとき（安全フィルタの fallbacks）の料金（$/100万トークン）。長い名前から順に照合する
+PRICES = {"claude-opus-5-5": (4.0, 20.0), "claude-opus-5": (5.0, 25.0), "claude-opus-4": (5.0, 25.0),
+          "claude-sonnet-5": (2.0, 10.0), "claude-sonnet-4": (3.0, 15.0), "claude-haiku-5": (0.10, 0.50),
+          "claude-haiku-4": (1.0, 5.0), "claude-fable": (10.0, 50.0), "claude-mythos": (10.0, 50.0)}
+
+
+def price_of(model) -> tuple[float, float]:
+    m = str(model or MODEL)
+    for k in sorted(PRICES, key=len, reverse=True):
+        if m.startswith(k):
+            return PRICES[k]
+    return PRICE_IN, PRICE_OUT
+
+
+def add_usage(usage: dict, msg) -> None:
+    """使ったトークン数を足す。別のモデルでやり直したときは、断られた分も含めて、モデルごとの料金で数える。
+
+    usage["adj"] は「既定の料金（PRICE_IN/OUT）との差額（ドル）」。cost_usd が足し合わせる。
+    """
+    u = msg.usage
+    its = [it for it in (getattr(u, "iterations", None) or [])
+           if getattr(it, "type", "") in ("message", "fallback_message")]
+    if its:
+        tries = [(getattr(it, "model", None) or (msg.model if it.type == "fallback_message" else MODEL),
+                  int(it.input_tokens or 0), int(it.output_tokens or 0)) for it in its]
+    else:
+        tries = [(getattr(msg, "model", None) or MODEL, int(u.input_tokens or 0), int(u.output_tokens or 0))]
+    for model, tin, tout in tries:
+        usage["in"] = usage.get("in", 0) + tin
+        usage["out"] = usage.get("out", 0) + tout
+        pin, pout = price_of(model)
+        if (pin, pout) != (PRICE_IN, PRICE_OUT):
+            usage["adj"] = usage.get("adj", 0.0) + tin / 1e6 * (pin - PRICE_IN) + tout / 1e6 * (pout - PRICE_OUT)
+
+
+def parse_answer(content) -> dict:
+    """返答の JSON を取り出す。途中で別のモデルに切り替わったとき（fallback）は、切り替わった後の文字だけを使う
+    （断られたモデルの書きかけの文字は捨てる）。読めなければ、ほかの失敗と同じ RuntimeError にする。"""
+    blocks = list(content or [])
+    last = max((i for i, b in enumerate(blocks) if getattr(b, "type", "") == "fallback"), default=-1)
+    after = "".join(b.text for b in blocks[last + 1:] if getattr(b, "type", "") == "text")
+    tries = [after]
+    if last >= 0:   # 書きかけの続きとして書かれた場合に備えて、つなげた文字も試す
+        tries.append("".join(b.text for b in blocks if getattr(b, "type", "") == "text"))
+    for text in tries:
+        try:
+            return json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            continue
+    raise RuntimeError("Claudeの返答を読み取れませんでした（JSONの形が壊れています）。もう一度試すか、--llm manual を試してください。")
 
 
 def analyze_cuts_api(chunks: list[Chunk], mode: str, glossary: list[str], effort: str) -> tuple[dict, dict]:
@@ -239,4 +289,4 @@ def write_manual_meta_prompt(items: list[tuple[float, str]], mode: str, path: Pa
 
 
 def cost_usd(usage: dict) -> float:
-    return usage["in"] / 1e6 * PRICE_IN + usage["out"] / 1e6 * PRICE_OUT
+    return usage["in"] / 1e6 * PRICE_IN + usage["out"] / 1e6 * PRICE_OUT + float(usage.get("adj", 0.0) or 0.0)

@@ -19,7 +19,9 @@ from PySide6.QtWidgets import (
 
 import rc_preprod as P
 
-C_BAD = QColor("#F3D6D6")
+import rc_theme   # 行の色は今のテーマ（ライト／ダーク）に合わせる: rc_theme.row_colors()
+
+C_BAD = QColor("#F3D6D6")   # ライトのときの色（互換のため残す）
 C_WARN = QColor("#FFF3C4")
 C_OK = QColor("#D8F0DA")
 PRIMARY = "QPushButton { background: #2B6CB0; color: white; font-weight: bold; padding: 6px 12px; }" \
@@ -77,7 +79,7 @@ class PlanTab(QWidget):
         self.b_new.clicked.connect(self.generate)
         hint = QLabel("AIは「作成」タブの設定を使います（AIを使わない場合は、ジャンルの定番の流れのひな形を作ります）")
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #555;")
+        hint.setProperty("role", "sub")
         form = QFormLayout()
         form.addRow("テーマ", self.theme)
         form.addRow("ジャンル", self.genre)
@@ -107,7 +109,7 @@ class PlanTab(QWidget):
         self.head.setStyleSheet("font-weight: bold; font-size: 15px;")
         self.head.setWordWrap(True)
         self.sub = QLabel("")
-        self.sub.setStyleSheet("color: #555;")
+        self.sub.setProperty("role", "sub")
         self.sub.setWordWrap(True)
         for lab in (self.head, self.sub):
             lab.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
@@ -137,7 +139,7 @@ class PlanTab(QWidget):
         self.b_save.clicked.connect(self.save)
         self.b_print = QPushButton("印刷用ページを開く")
         self.b_print.setToolTip("ブラウザで開きます。Ctrl+P で紙やPDFにできます")
-        self.b_print.clicked.connect(lambda: self.pdir and self.G.open_path(self.pdir / "plan.html"))
+        self.b_print.clicked.connect(self.open_print)
         self.b_folder = QPushButton("フォルダを開く")
         self.b_folder.clicked.connect(lambda: self.pdir and self.G.open_path(self.pdir))
         bl = QHBoxLayout()
@@ -189,6 +191,28 @@ class PlanTab(QWidget):
 
     def _dirty(self, on: bool):
         self.b_save.setText("保存 ●" if on else "保存")
+
+    def is_dirty(self) -> bool:
+        return self.data is not None and self.b_save.text().endswith("●")
+
+    def ask_save(self, why: str = "") -> bool:
+        """保存していない手直しがあれば、保存するか聞く。続けてよければ True（「キャンセル」なら False）"""
+        if not self.is_dirty():
+            return True
+        r = QMessageBox.question(self, "保存していません", f"直した内容を保存しますか？{why}",
+                                 QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
+        if r == QMessageBox.Save:
+            self.save()
+            return True
+        return r == QMessageBox.Discard
+
+    def open_print(self):
+        """印刷用ページを開く。直した内容は、保存してから開く（撮影に持っていく紙に入るように）"""
+        if not self.pdir:
+            return
+        if not self.ask_save("\n（印刷用ページは、保存した内容で作られます）"):
+            return
+        self.G.open_path(self.pdir / "plan.html")
 
     def _changed(self, _it):
         if not self._loading:
@@ -465,11 +489,11 @@ class CheckPanel(QWidget):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.cellClicked.connect(self._clicked)
         self.table.itemChanged.connect(self._item_changed)
-        legend = QLabel("<span style='background:#F3D6D6'>&nbsp;話していない・撮った記録なし&nbsp;</span> "
-                        "<span style='background:#FFF3C4'>&nbsp;一部だけ・要確認&nbsp;</span> "
-                        "<span style='background:#D8F0DA'>&nbsp;OK&nbsp;</span>　"
-                        "カットは、撮れていたら「状態」に印を付けてください")
+        legend = QLabel()
         legend.setWordWrap(True)
+        self.legend = legend
+        self._legend()
+        rc_theme.on_change(self._retheme)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addLayout(row)
@@ -477,6 +501,19 @@ class CheckPanel(QWidget):
         lay.addWidget(self.table, 1)
         lay.addWidget(legend)
         self._update_buttons()
+
+    def _legend(self):
+        tk = rc_theme.tokens()
+
+        def span(key, text):
+            return f"<span style='background:{tk[key]}; color:{tk['text']}'>&nbsp;{text}&nbsp;</span>"
+        self.legend.setText(f"{span('row_cut', '話していない・撮った記録なし')} {span('row_review', '一部だけ・要確認')} "
+                            f"{span('row_hil', 'OK')}　カットは、撮れていたら「状態」に印を付けてください")
+
+    def _retheme(self):
+        self._legend()
+        if self.res:
+            self.show_result(self.res)
 
     def _update_buttons(self):
         ok = self.out is not None and not self.win.runner.busy and self.project.count() > 0 \
@@ -516,10 +553,12 @@ class CheckPanel(QWidget):
         how = "Claude" if res.get("method") == "ai" else "言葉の一致"
         self.summary.setText(f"話していない要点 <b>{c['missing']}</b> / {c['points']}（一部だけ {c['partial']}）　"
                              f"撮った記録がないカット <b>{c['shots_missing']}</b> / {c['shots']}　"
-                             f"<span style='color:#555'>（{how}で照合・{res.get('created', '')}）</span>")
+                             f"<span style='color:{rc_theme.tokens()['subtext']}'>（{how}で照合・{res.get('created', '')}）</span>")
         rows = [("p", p) for p in res["points"]] + [("s", s) for s in res["shots"]]
         self.table.setRowCount(len(rows))
         fmt = self.G.fmt
+        rc = rc_theme.row_colors()
+        C_OK, C_WARN, C_BAD, fg = rc["ok"], rc["warn"], rc["bad"], QBrush(rc["fg"])
         for r, (kind, it) in enumerate(rows):
             if kind == "p":
                 st = _ro(P.POINT_STATUS.get(it["status"], it["status"]))
@@ -537,6 +576,7 @@ class CheckPanel(QWidget):
                      _ro(fmt(it["t"]) if it.get("t") is not None else ""), _ro(it.get("note", ""))]
             for col, cell in enumerate(cells):
                 cell.setBackground(QBrush(color))
+                cell.setForeground(fg)   # 淡い背景の上でも読めるように、文字の色も決める
                 if col == 4:
                     cell.setToolTip(it.get("note", ""))
                 self.table.setItem(r, col, cell)
@@ -598,6 +638,10 @@ class CheckPanel(QWidget):
         if not self.out or not pdir:
             QMessageBox.information(self, "台本を選んでください", "照らし合わせる企画（台本）を選んでください。")
             return
+        pt = getattr(self.win, "plan_tab", None)   # 企画タブで直したまま保存していない台本は、保存してから照合する
+        if pt is not None and pt.pdir and Path(pt.pdir).resolve() == Path(pdir).resolve() \
+                and not pt.ask_save("\n（撮り漏れチェックは、保存した台本で照合します）"):
+            return
         llm = "none"
         if ai:
             llm = self.win.create.llm.currentData()
@@ -625,6 +669,8 @@ class CheckPanel(QWidget):
 
 def register(win):
     win.plan_tab = PlanTab(win)
+    if hasattr(win, "close_hooks"):   # ツールを閉じるときも、企画の手直しの保存を確かめる
+        win.close_hooks.append(lambda: win.plan_tab.ask_save())
     win.tabs.addTab(win.plan_tab, "企画")
     win.check_panel = CheckPanel(win)
     win.review.tabs.addTab(win.check_panel, "③ 撮り漏れチェック")

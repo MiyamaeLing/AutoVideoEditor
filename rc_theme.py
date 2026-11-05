@@ -146,6 +146,8 @@ QStatusBar {{ color: {t['subtext']}; }}
 QLabel[role="title"] {{ font-size: 15px; font-weight: bold; }}
 QLabel[role="sub"] {{ color: {t['subtext']}; }}
 QLabel[role="hint"] {{ color: {t['subtext']}; font-size: 11px; }}
+QLabel[role="summary"] {{ background: {t['surface2']}; color: {t['text']}; border: 1px solid {t['border']};
+                        border-radius: 6px; padding: 6px; }}
 QLabel[role="notice"] {{ background: {t['notice_bg']}; color: {t['notice_text']}; border-radius: 6px; padding: 6px; }}
 QFrame[role="card"] {{ background: {t['surface']}; border: 1px solid {t['border']}; border-radius: 10px; }}
 QFrame[role="guide"] {{ background: {t['accent_soft']}; border: 1px solid {t['accent']}; border-radius: 10px; }}
@@ -167,7 +169,29 @@ def apply(app, mode: str = "auto", font_size: str = "normal") -> dict:
     app.setFont(f)
     app.setPalette(palette(t))
     app.setStyleSheet(stylesheet(t))
+    for fn in list(_hooks):   # 拡張の画面の、自分で色を付けた所（表の行など）を描き直す
+        try:
+            fn()
+        except RuntimeError:   # 閉じた画面（Qt の部品が消えている）
+            _hooks.remove(fn)
+        except Exception:  # noqa: BLE001  1つの描き直しの失敗で、テーマの切り替えを止めない
+            pass
     return _current
+
+
+_hooks: list = []
+
+
+def on_change(fn) -> None:
+    """テーマ（ライト／ダーク）が変わったときに呼ぶ関数を登録する"""
+    _hooks.append(fn)
+
+
+def row_colors() -> dict:
+    """表の行の色（今のテーマ）。bad=赤み / warn=黄色 / ok=緑 / fg=その上の文字の色"""
+    t = _current
+    return {"bad": QColor(t["row_cut"]), "warn": QColor(t["row_review"]), "ok": QColor(t["row_hil"]),
+            "fg": QColor(t["text"])}
 
 
 # ------------------------------------------------------------ アイコン（線で描いたシンプルなもの）

@@ -898,3 +898,47 @@ SAMPLE_TELOPS = [
     (12.0, 15.8, "なにこれ！？／軽すぎる…", "bubble"),
 ]
 
+
+
+# ============================================================
+#  画面から「使う／使わない」を切り替える（template.toml の enabled を書き換える）
+# ============================================================
+TOGGLES = {"opening": "完成動画の最初にオープニングを付ける", "ending": "完成動画の最後にエンディングを付ける",
+           "progress": "章の進み具合（画面の上のバー）を出す"}
+
+
+def get_enabled(tdir: Path, section: str) -> bool:
+    try:
+        return bool((Template(Path(tdir)).get(section, {}) or {}).get("enabled", False))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def set_enabled(tdir: Path, section: str, on: bool) -> bool:
+    """template.toml の [section] の enabled を true / false にする（ほかの行・コメントはそのまま）。
+
+    その節に enabled の行がなければ、節の見出しのすぐ下に足す。節がなければ、ファイルの末尾に足す。
+    """
+    p = Path(tdir) / "template.toml"
+    text = p.read_text(encoding="utf-8-sig") if p.exists() else ""
+    lines = text.splitlines(keepends=True)
+    val = "true" if on else "false"
+    head = re.compile(r"^\s*\[\s*([^\]\s]+)\s*\]")
+    start = next((i for i, ln in enumerate(lines) if (m := head.match(ln)) and m.group(1) == section), None)
+    if start is None:
+        if text and not text.endswith("\n"):
+            text += "\n"
+        text += f"\n[{section}]\nenabled = {val}\n"
+    else:
+        end = next((i for i in range(start + 1, len(lines)) if head.match(lines[i])), len(lines))
+        for i in range(start + 1, end):
+            m = re.match(r"^(\s*enabled\s*=\s*)(\S+)(.*)$", lines[i].rstrip("\r\n"))
+            if m:
+                nl = lines[i][len(lines[i].rstrip("\r\n")):] or "\n"
+                lines[i] = f"{m.group(1)}{val}{m.group(3)}{nl}"
+                break
+        else:
+            lines.insert(start + 1, f"enabled = {val}\n")
+        text = "".join(lines)
+    p.write_text(text, encoding="utf-8")
+    return get_enabled(tdir, section) == on

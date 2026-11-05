@@ -124,7 +124,10 @@ def collect_materials(items: list[Path], exclude: Path | None = None) -> list[Pa
                 rp = p.resolve()
                 if ex and (rp == ex or ex in rp.parents):
                     continue
-                if any(part.endswith(("_mv", "_roughcut")) or part in ("work", "_mv_work") for part in rp.parts[:-1]):
+                # 作業用のフォルダかどうかは、指定したフォルダの中だけで判断する
+                # （D:\work\MV素材 のように、上の階層の名前で全部はずれてしまわないように）
+                rel = p.relative_to(it).parts[:-1]
+                if any(part.endswith(("_mv", "_roughcut")) or part in ("work", "_mv_work") for part in rel):
                     continue
                 found.append(p)
             out += sorted(found, key=natural)

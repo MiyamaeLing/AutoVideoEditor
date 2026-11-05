@@ -102,7 +102,7 @@ class ShortsDialog(QDialog):
         cl.addWidget(title)
         by = "AIが選んだ区間" if s.get("by") == "ai" else "見どころから自動で選んだ区間"
         info = QLabel(f"{s.get('duration', 0):.0f}秒 ／ 本編 {_fmt(s.get('start', 0))}〜{_fmt(s.get('end', 0))}\n{by}")
-        info.setStyleSheet("color: #555;")
+        info.setProperty("role", "sub")
         cl.addWidget(info)
         desc = QPlainTextEdit(s.get("description", ""))
         desc.setReadOnly(True)
@@ -171,8 +171,13 @@ class ShortsExt:
         if not rv.out:
             return
         llm = self.win.create.llm.currentData()
-        if picks is None and not self.win.check_api_key(llm):
-            return
+        if picks is None and llm == "api" and not _gui(self.win).has_api_key(self.win.settings):
+            # APIキーがないときは、AIを使わずに見どころから選ぶ（README のとおり）。先に確かめる
+            if QMessageBox.question(self, "APIキーが未設定です",
+                                    "Claude の APIキーが設定されていません。\n"
+                                    "AIを使わずに、見どころ（盛り上がった所）から自動で選んで作りますか？") != QMessageBox.Yes:
+                return
+            llm = "none"
         if rv._dirty():   # カットの変更がまだ反映されていなければ、先に反映する
             rv.apply_cuts(then=lambda: self.make(picks))
             return

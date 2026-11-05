@@ -222,6 +222,7 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
     if plan.get("speedups"):
         ftl = rc_speedup.SpeedTimeline(tl, plan["speedups"], zooms, sp_cfg["audio"], sp_cfg["audio_volume_db"])
         items, span = rc_speedup.retime_items(chunks, cut, corr, ftl, span)
+        mc = rc_multicam.retime(mc, ftl)   # カメラの最短ショット長を、早送り後の時刻で守る
     segs = ftl.segs if ftl is not tl else split_by_zoom(tl, zooms)
     segs = rc_multicam.apply_segs(segs, src, fps, mc, w, h)   # 手元カメラの区間は映像を2台目に差し替える
     segs = rc_broll.attach_to_segs(segs, plan.get("broll", []), span, tpl, fps, w, h, out_dir)

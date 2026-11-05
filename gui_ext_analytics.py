@@ -82,9 +82,10 @@ class AnalyticsPage(QWidget):
         b_open = QPushButton("別の結果を開く…")
         b_open.clicked.connect(self._open_other)
         self.vid = QLineEdit()
-        self.vid.setPlaceholderText("空なら「YouTubeへ」で設定した動画（例: dQw4w9WgXcQ）")
+        self.vid.setPlaceholderText("空なら「YouTubeへ」で設定した動画")
         self.vid.setToolTip("YouTube Studio の動画のURL「studio.youtube.com/video/○○○/edit」の○○○の部分です")
-        self.vid.setMaximumWidth(330)
+        self.vid.setMinimumWidth(300)
+        self.vid.setMaximumWidth(420)
         self.link = QLabel()
         self.b_relink = QPushButton("Googleと連携し直す")
         self.b_relink.setToolTip("視聴維持率を読む許可を追加します。ブラウザが開くので、すべての項目を許可してください")
@@ -126,11 +127,11 @@ class AnalyticsPage(QWidget):
         row.addWidget(b_rep)
         row.addWidget(_wrap_label("公開してから2〜3日たつと、データが出ます。"), 1)
         self.ret_summary = _wrap_label("まだ分析していません。")
-        self.ret_summary.setStyleSheet("background: #F7FAFC; padding: 6px;")
+        self.ret_summary.setProperty("role", "summary")   # 色はテーマに合わせる（ダークでも読めるように）
         self.chart = FitImage(250)
         legend = QLabel("<span style='color:#E34948'>●</span> 番号＝視聴者がいつもより多く離れた場面　"
                         "<span style='color:#1BAF7A'>●</span> ＋＝見返された場面　（横＝完成動画の時刻・縦＝見ている人の割合）")
-        legend.setStyleSheet("color: #52514E;")
+        legend.setProperty("role", "sub")
         self.t_scene = QTableWidget(0, 6)
         self.t_scene.setHorizontalHeaderLabels(["", "時刻", "見ている人", "その場面の発言・テロップ", "考えられる原因", "改善案"])
         hh = self.t_scene.horizontalHeader()
@@ -145,7 +146,8 @@ class AnalyticsPage(QWidget):
         self.frame = QLabel("場面を選ぶと\n画面が出ます")
         self.frame.setAlignment(Qt.AlignCenter)
         self.frame.setFixedWidth(250)
-        self.frame.setStyleSheet("color: #888; border: 1px solid #E2E1DC;")
+        self.frame.setProperty("role", "sub")
+        self.frame.setStyleSheet("border: 1px solid palette(mid);")
         mid = QHBoxLayout()
         mid.addWidget(self.t_scene, 1)
         mid.addWidget(self.frame)
@@ -173,7 +175,7 @@ class AnalyticsPage(QWidget):
         row.addWidget(b_rep)
         row.addStretch()
         self.com_summary = _wrap_label("まだ要約していません。")
-        self.com_summary.setStyleSheet("background: #F7FAFC; padding: 6px;")
+        self.com_summary.setProperty("role", "summary")
         self.t_reply = QTableWidget(0, 4)
         self.t_reply.setHorizontalHeaderLabels(["投稿した人", "コメント", "返信の案（ダブルクリックで直せます）", "状態"])
         hh = self.t_reply.horizontalHeader()
@@ -244,7 +246,7 @@ class AnalyticsPage(QWidget):
         row.addWidget(self.b_trend)
         row.addWidget(self.use, 1)
         self.trend_summary = _wrap_label("")
-        self.trend_summary.setStyleSheet("background: #F7FAFC; padding: 6px;")
+        self.trend_summary.setProperty("role", "summary")
         self.trend_hints = _wrap_label("")
         self.t_videos = QTableWidget(0, 5)
         self.t_videos.setHorizontalHeaderLabels(["動画", "ジャンル", "30秒時点", "平均の視聴割合", "分析した日"])
@@ -304,9 +306,13 @@ class AnalyticsPage(QWidget):
 
     def showEvent(self, e):
         rv = getattr(self.win, "review", None)
-        if rv is not None and rv.out and (self.out is None or Path(rv.out) != self.out):
-            self.vid.clear()
-            self.set_folder(rv.out)
+        # 「確認・仕上げ」で開いた結果が変わったときだけ、それに合わせる
+        # （このタブの「別の結果を開く…」で選んだ動画と動画IDを、タブを切り替えただけで戻さないように）
+        if rv is not None and rv.out and Path(rv.out) != getattr(self, "_synced_rv", None):
+            self._synced_rv = Path(rv.out)
+            if self.out is None or Path(rv.out) != self.out:
+                self.vid.clear()
+                self.set_folder(rv.out)
         self.refresh_link()
         self.load_trends()
         super().showEvent(e)
@@ -415,7 +421,7 @@ class AnalyticsPage(QWidget):
         sl = QVBoxLayout(sb)
         for s in d.get("shorts", []):
             where = f"本編 {A.fmt_t(s['t'])}「{s.get('label', '')}」から" if s.get("t") is not None else ""
-            sl.addWidget(QLabel(f"<b>{s.get('title', '')}</b>　<span style='color:#666'>{where}</span>"))
+            sl.addWidget(QLabel(f"<b>{s.get('title', '')}</b>　<i>{where}</i>"))
             sl.addLayout(self._text_block(s.get("title", ""), height=34))
             sl.addLayout(self._text_block(s.get("description", ""), height=130))
         for b in (xb, ib, sb):
@@ -435,7 +441,7 @@ class AnalyticsPage(QWidget):
             def upd():
                 n = A.x_length(ed.toPlainText())
                 cnt.setText(f"{n}/280")
-                cnt.setStyleSheet("color: #C53030; font-weight: bold;" if n > 280 else "color: #52514E;")
+                cnt.setStyleSheet("color: #C53030; font-weight: bold;" if n > 280 else "")
             ed.textChanged.connect(upd)
             upd()
             side.addWidget(cnt)

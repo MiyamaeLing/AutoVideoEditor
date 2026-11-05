@@ -84,13 +84,14 @@ def run_progress(cmd: list[str], total: float, cwd: Path | None = None, what: st
 
 def has_audio(path: Path) -> bool:
     p = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index",
-                        "-of", "csv=p=0", str(path)], capture_output=True, text=True)
+                        "-of", "csv=p=0", str(path)], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
     return bool(p.stdout.strip())
 
 
 def media_duration(path: Path) -> float:
     p = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
     return float(p.stdout.strip() or 0)
 
 

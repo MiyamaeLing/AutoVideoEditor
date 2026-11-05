@@ -280,6 +280,8 @@ def gpu_text() -> str:
             return "NVIDIA: " + s.replace("\n", " / ")
     if os.name == "nt":
         s = _cmd(["powershell", "-NoProfile", "-Command",
+                  # 出力を UTF-8 にする（Windows PowerShell 5.1 の初期値は cp932 で、日本語が化けるため）
+                  "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
                   "Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name + ' (ドライバー ' + $_.DriverVersion + ')' }"])
         if s:
             return s.replace("\n", " / ") + "（nvidia-smi が見つかりません）"

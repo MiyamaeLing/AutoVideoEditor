@@ -234,7 +234,8 @@ class Runner(QWidget):
         elif m := re.search(r"\((\d+)%\)\s*$", s):           # 文字起こし
             self._set(int(m.group(1)))
         elif m := re.fullmatch(r"(\d+)%", s):                 # 最終書き出し
-            self.stage.setText("最終書き出し（字幕・テロップの焼き込み）")
+            if "書き出" not in self.stage.text():   # ショートの書き出しなど、すでに出ている説明はそのまま
+                self.stage.setText("最終書き出し（字幕・テロップの焼き込み）")
             self._set(int(m.group(1)))
         elif m := re.search(r"本編の書き出し (\d+)/(\d+)", s):
             self.stage.setText(f"本編の書き出し {m.group(1)}/{m.group(2)}")
@@ -912,12 +913,30 @@ class YouTubeDialog(QDialog):
         if not self.loc.isChecked():
             return self.page.win.runner.start("youtube.py", args, title, done, handle_error=handle_error)
         args = args + ["--localize"]
+        win = self.page.win
+        # APIキーがない・「claude.ai に貼り付けて使う」のときは、貼り付けの画面で訳してもらう（キーなしで使える）
+        llm = "api" if win.create.llm.currentData() != "manual" and has_api_key(win.settings) else "manual"
+
+        def translate(llm_now: str):
+            targs = [str(self.out), "--template", self.page._template(), "--llm", llm_now]
+            if llm_now == "api":
+                targs += ["--effort", win.create.effort.currentData()]
+            win.runner.start("translate.py", targs, "英語字幕・英語タイトルを翻訳中", translated)
 
         def translated(ok):
-            if ok:
-                self.page.win.runner.start("youtube.py", args, title, done, handle_error=handle_error)
-        self.page.win.runner.start("translate.py", [str(self.out), "--template", self.page._template()],
-                                   "英語字幕・英語タイトルを翻訳中", translated)
+            if not ok:
+                return
+            pending = read_json(self.out / "translate_pending.json", []) or []
+            if pending:
+                for pd in pending:   # claude.ai に貼り付けて訳してもらう
+                    dlg = ManualDialog(self, Path(pd["prompt"]), f"{pd['name']}に翻訳")
+                    if dlg.exec() != QDialog.Accepted:
+                        return
+                    Path(pd["reply"]).write_text(dlg.text(), encoding="utf-8")
+                translate("manual")   # 返答を読み込んで仕上げてから、もう一度ここに戻る
+                return
+            win.runner.start("youtube.py", args, title, done, handle_error=handle_error)
+        translate(llm)
 
     def _reset(self):
         if QMessageBox.question(self, "AIの案に戻す", "タイトル・概要欄・タグなど、画面で直した内容を捨てて、"
@@ -1039,6 +1058,7 @@ class ReviewPage(QWidget):
         self.summary.setStyleSheet("color: #555;")
         open_btn = QPushButton("別の結果を開く…")
         open_btn.clicked.connect(self._open_other)
+        self.b_other = open_btn
         fol_btn = QPushButton("フォルダを開く")
         fol_btn.clicked.connect(lambda: self.out and open_path(self.out))
         top = QHBoxLayout()
@@ -1194,11 +1214,18 @@ class ReviewPage(QWidget):
         if d:
             self.load(Path(d))
 
-    def load(self, out: Path):
+    def load(self, out: Path) -> bool:
+        out = Path(out)
+        if self.win.runner.busy and self.out is not None and out != self.out:
+            # 処理が終わったときの続き（プランの手直しを消す・書き出した動画を開く）が、別の結果に向かないように
+            QMessageBox.information(self, "処理中です", "処理の実行中は、別の結果を開けません。\n"
+                                    "今の処理が終わってから（または下の「中止」を押してから）開いてください。")
+            return False
         sess = read_json(out / "session.json")
         if not sess:
             QMessageBox.warning(self, "読み込めません", f"{out} に session.json がありません。先に荒編集を実行してください。")
-            return
+            return False
+        self.save_plan_if_changed()   # 演出の表の手直しを、別の結果に切り替える前に保存する
         self.out = out
         self.sess = sess
         self.chunks = read_json(out / "chunks.json", [])
@@ -1209,6 +1236,29 @@ class ReviewPage(QWidget):
         self._fill_plan()
         self._update_buttons()
         self.loaded.emit(out)
+        return True
+
+    # 演出の表の手直しが保存されずに消えないように（結果の切り替え・ツールを閉じるとき）
+    def _plan_state(self) -> str | None:
+        try:
+            return json.dumps(self._collect_plan(), ensure_ascii=False, sort_keys=True) if self._plan_rows() else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def snap_plan(self):
+        """表に読み込んだ直後の内容を覚えておく（これと違えば、手直しがあったと分かる）"""
+        self._plan_snap = (self.out, self._plan_state())
+
+    def save_plan_if_changed(self) -> bool:
+        snap = getattr(self, "_plan_snap", None)
+        if not self.out or not snap or snap[0] != self.out:
+            return False
+        if self._plan_state() == snap[1]:
+            return False
+        if self._save_plan_edits():
+            self.snap_plan()
+            return True
+        return False
 
     def _compute_offsets(self):
         self.offsets = []
@@ -1357,10 +1407,11 @@ class ReviewPage(QWidget):
     def _plan_rows(self) -> int:
         return self.t_telop.rowCount() + self.t_zoom.rowCount() + self.t_bgm.rowCount()
 
-    def _discard_plan_edits(self):
+    def _discard_plan_edits(self, out: Path | None = None):
         """演出プランを作り直したときは、前のプランへの手直しは使わない"""
-        if self.out:
-            (self.out / "plan_edited.json").unlink(missing_ok=True)
+        out = out or self.out
+        if out:
+            (out / "plan_edited.json").unlink(missing_ok=True)
 
     def apply_cuts(self, then=None):
         if not self.out:
@@ -1387,8 +1438,10 @@ class ReviewPage(QWidget):
         if a.get("whisper_model"):
             args += ["--whisper-model", a["whisper_model"]]
 
+        out = self.out
+
         def done(ok):
-            if ok:
+            if ok and self.out == out:
                 self.load(self.out)
                 self.b_apply.setText("カットの変更を反映")
                 if then:
@@ -1414,9 +1467,13 @@ class ReviewPage(QWidget):
             return
         args = [str(self.out), "--template", self._template(), "--plan-only", "--llm", llm,
                 "--effort", self.win.create.effort.currentData()]
+        out = self.out   # 処理を始めたときの結果（終わったときに別の結果が開かれていても、こちらに向ける）
 
         def done(ok):
             if not ok:
+                return
+            if self.out != out:
+                self._discard_plan_edits(out)
                 return
             if llm == "manual" and (self.out / "prompt_plan.md").exists() and not (self.out / "plan_used.json").exists():
                 self._manual_plan(then)
@@ -1436,9 +1493,13 @@ class ReviewPage(QWidget):
             p = self.out / "claude_plan.json"
             p.write_text(dlg.text(), encoding="utf-8")
             args = [str(self.out), "--template", self._template(), "--plan-only", "--plan", str(p)]
+            out = self.out
 
             def done(ok):
                 if not ok:
+                    return
+                if self.out != out:
+                    self._discard_plan_edits(out)
                     return
                 self._discard_plan_edits()
                 self._fill_plan()
@@ -1570,12 +1631,13 @@ class ReviewPage(QWidget):
         if preview:
             args += ["--preview", "60"]
         name = f"{self.sess['stem']}_{'プレビュー' if preview else '完成'}.mp4"
+        out = self.out
 
         def done(ok):
             self._update_buttons()
-            if ok and (self.out / name).exists():
+            if ok and (out / name).exists():
                 if QMessageBox.question(self, "書き出し完了", f"{name} ができました。再生しますか？") == QMessageBox.Yes:
-                    open_path(self.out / name)
+                    open_path(out / name)
         self.win.runner.start("finish.py", args, "試し書き出し中（60秒）" if preview else "完成動画を書き出し中", done)
 
     def _final_path(self) -> Path | None:
@@ -1619,9 +1681,10 @@ class ReviewPage(QWidget):
     def _update_buttons(self):
         if self.win.runner.busy:   # 処理中は押せないようにする（押せない理由が見て分かるように）
             for b in (self.b_apply, self.b_xml, self.b_plan, self.b_prev, self.b_final, self.b_play, self.b_thumb,
-                      self.b_yt):
+                      self.b_yt, self.b_other):
                 b.setEnabled(False)
             return
+        self.b_other.setEnabled(True)
         has = self.out is not None
         has_plan = has and (self.out / "plan_used.json").exists()
         for b in (self.b_apply, self.b_xml, self.b_plan):
@@ -1660,17 +1723,37 @@ class MainWindow(QMainWindow):
         self.tools_menu = self.menuBar().addMenu("ツール")
         self.help_menu = self.menuBar().addMenu("ヘルプ")
         self.runner.busy_changed.connect(self._busy_changed)
+        self._busy_widgets: list = []
+        self.close_hooks: list = []   # ツールを閉じる前に呼ぶ（False を返すと閉じない）。拡張が保存の確認などに使う
+        self.review.loaded.connect(lambda _out: self._refresh_busy_widgets())
         self.load_extensions()
+        # 表に読み込んだ直後の内容を覚える（拡張が足した表も含めて。手直しがあったかを見分けるため）
+        fill = self.review._fill_plan
+
+        def fill_and_snap(*a, **kw):
+            r = fill(*a, **kw)
+            self.review.snap_plan()
+            return r
+        self.review._fill_plan = fill_and_snap
         # 拡張が何も追加しなかったメニューは、空のまま出さない
         for m in (self.tools_menu, self.help_menu):
             m.menuAction().setVisible(bool(m.actions()))
 
-    def check_api_key(self, llm: str) -> bool:
-        """AIを「Claude APIで自動」にしているのにキーがないときは、先に知らせて止める"""
+    def check_api_key(self, llm: str, api_only: str = "") -> bool:
+        """AIを「Claude APIで自動」にしているのにキーがないときは、先に知らせて止める
+
+        api_only: Claude API でしか動かない機能のときは、その代わりの方法（なければ空）を書く。
+        AIの欄を変えても変わらない機能で、「AIの欄で選んでください」と案内しないように。
+        """
         if llm == "api" and not has_api_key(self.settings):
-            QMessageBox.information(self, "APIキーが未設定です",
-                                    "「作成」タブの「APIキーを設定…」から設定するか、AIの欄で"
-                                    "「claude.ai に貼り付けて使う」または「AIを使わない」を選んでください。")
+            if api_only:
+                QMessageBox.information(self, "APIキーが未設定です",
+                                        "この機能は Claude API を使います。「作成」タブの「APIキーを設定…」から"
+                                        f"設定してください。\n\n{api_only}")
+            else:
+                QMessageBox.information(self, "APIキーが未設定です",
+                                        "「作成」タブの「APIキーを設定…」から設定するか、AIの欄で"
+                                        "「claude.ai に貼り付けて使う」または「AIを使わない」を選んでください。")
             return False
         return True
 
@@ -1679,6 +1762,20 @@ class MainWindow(QMainWindow):
         for b in (self.create.btn_rough, self.create.btn_full):
             b.setEnabled(not busy)
         self.review._update_buttons()
+        self._refresh_busy_widgets()
+
+    def lock_while_busy(self, w, needs_out: bool = False):
+        """拡張のボタン・メニュー項目を、処理中は押せないようにする（needs_out: 結果を開いているときだけ押せる）"""
+        self._busy_widgets.append((w, needs_out))
+        self._refresh_busy_widgets()
+
+    def _refresh_busy_widgets(self):
+        busy = self.runner.busy
+        for w, needs_out in list(getattr(self, "_busy_widgets", [])):
+            try:
+                w.setEnabled(not busy and (not needs_out or self.review.out is not None))
+            except RuntimeError:   # 消えた部品
+                self._busy_widgets.remove((w, needs_out))
 
     def load_extensions(self):
         """gui_ext_*.py を読み込む。各ファイルは register(win) を持ち、メニュー・タブ・ボタンを追加する。
@@ -1748,8 +1845,19 @@ class MainWindow(QMainWindow):
                 self, "実行中です", "処理を中止して終了しますか？") != QMessageBox.Yes:
             e.ignore()
             return
+        for hook in list(getattr(self, "close_hooks", [])):
+            try:
+                if hook() is False:
+                    e.ignore()
+                    return
+            except Exception:  # noqa: BLE001
+                pass
         self.runner.stop(wait=True)
         self.create.save_settings()
+        try:
+            self.review.save_plan_if_changed()   # 演出の表の手直しを残す（開き直しても消えないように）
+        except Exception:  # noqa: BLE001
+            pass
         e.accept()
 
 
@@ -1764,8 +1872,11 @@ def _make_plan_and_render(self: ReviewPage):
         return
     args = [str(self.out), "--template", self._template(), "--llm", llm,
             "--effort", self.win.create.effort.currentData()]
+    out = self.out
 
     def done(ok):
+        if self.out != out:
+            return
         self._fill_plan()
         self._update_buttons()
         if ok and self._final_path().exists():

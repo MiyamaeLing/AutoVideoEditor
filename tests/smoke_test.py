@@ -141,6 +141,8 @@ print('gui ok')
     test_preprod.run_all(check, out, fx)
     import test_integration   # 最後に、機能どうしの組み合わせ（統合）
     test_integration.run_all(check, out, fx)
+    import test_review_fixes   # 統合後の確認で見つかった問題の直し
+    test_review_fixes.run_all(check, out, fx)
 
     failed = [r for r in results if not r[1]]
     print(f"\n{len(results) - len(failed)}/{len(results)} 件 成功")

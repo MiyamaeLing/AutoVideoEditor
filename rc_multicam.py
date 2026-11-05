@@ -9,7 +9,7 @@
 決めた区間は演出プランの "angles" に、元素材（本編）の時刻で保存します:
     "angles": [{"start": 29.6, "end": 40.1, "cam": "cam2", "why": "無言の作業"}]
 元素材の時刻なので、あとでカットを変えても同じ場面を指します。
-1つのカメラを映す最短の長さ（min_shot 秒）は、カット後のタイムラインで守ります。
+1つのカメラを映す最短の長さ（min_shot 秒）は、カット後のタイムラインで守ります（早送りがあるときは、早送り後の完成の時刻で守り直します）。
 書き出し（rc_render）では、この区間の映像だけを2台目に差し替えます（音声は本編のまま）。
 """
 from __future__ import annotations
@@ -123,22 +123,31 @@ def _intersect(a, b):
 
 
 def _pieces(tl: Timeline):
+    """(区間, 完成での開始, 完成での終了, 倍率)。倍率は早送り（rc_speedup.SpeedTimeline）の区間だけ 1 より大きい"""
     fps = float(tl.fps)
+    parts = getattr(tl, "parts", None)   # 早送り入りのタイムライン（倍率を持っている）
+    if parts is not None:
+        from rc_timeline import Piece
+        for pt in parts:
+            if pt.of <= 0:
+                continue   # 早送りでフレームが残らない所
+            p = Piece(pt.file_index, 0, 0, pt.o0, pt.o0 + pt.of, pt.g0, pt.g1)
+            yield p, pt.o0 / fps, (pt.o0 + pt.of) / fps, float(pt.speed)
+        return
     for p in tl.pieces:
-        ps, pe = p.seq_start / fps, p.seq_end / fps
-        yield p, ps, pe
+        yield p, p.seq_start / fps, p.seq_end / fps, 1.0
 
 
 def to_edit(tl: Timeline, ranges) -> list[tuple[float, float]]:
-    """元素材の時刻の区間 → カット後のタイムラインの区間"""
+    """元素材の時刻の区間 → カット後のタイムラインの区間（早送り入りのタイムラインなら、縮めた後の時刻）"""
     out = []
     ranges = _merge(ranges)
-    for p, ps, pe in _pieces(tl):
+    for p, ps, pe, sp in _pieces(tl):
         for s, e in ranges:
             if e <= p.g_in or s >= p.g_out:
                 continue
-            a = ps + max(s, p.g_in) - p.g_in
-            b = min(pe, ps + min(e, p.g_out) - p.g_in)
+            a = ps + (max(s, p.g_in) - p.g_in) / sp
+            b = min(pe, ps + (min(e, p.g_out) - p.g_in) / sp)
             if b - a > EPS:
                 out.append((a, b))
     return _merge(out)
@@ -147,11 +156,11 @@ def to_edit(tl: Timeline, ranges) -> list[tuple[float, float]]:
 def to_source(tl: Timeline, ivs) -> list[tuple[float, float]]:
     """カット後のタイムラインの区間 → 元素材の時刻の区間（カットの所で分かれる）"""
     out = []
-    for p, ps, pe in _pieces(tl):
+    for p, ps, pe, sp in _pieces(tl):
         for s, e in ivs:
             a, b = max(s, ps), min(e, pe)
             if b - a > EPS:
-                out.append((p.g_in + a - ps, min(p.g_out, p.g_in + b - ps)))
+                out.append((p.g_in + (a - ps) * sp, min(p.g_out, p.g_in + (b - ps) * sp)))
     return sorted(out)
 
 
@@ -494,6 +503,20 @@ class Multicam:
     cam2: Cam2
     shots: list[tuple[float, float]]   # 手元カメラを映す区間（元素材の時刻）
     background: str = "blur"
+    min_shot: float = 3.0
+    angles: list | None = None
+
+
+def retime(mc: "Multicam | None", ftl) -> "Multicam | None":
+    """早送りがあるときは、最短ショット長（min_shot）を早送り後（完成）の時刻で守り直す。
+    早送りの中のショットが、完成では 1/倍率 の長さになって、カメラが短く切り替わらないように"""
+    if not mc or not mc.angles or ftl is None:
+        return mc
+    try:
+        mc.shots = compute_shots(ftl, mc.angles, mc.cam2, mc.min_shot)
+    except Exception as e:  # noqa: BLE001  計算できなければ、早送り前の区間のまま使う
+        print(f"  [注意] 早送りに合わせたカメラの切り替えを計算できませんでした: {e}")
+    return mc
 
 
 def has_api_key() -> bool:
@@ -540,7 +563,7 @@ def prepare(out_dir: Path, sess: dict, tl: Timeline, chunks, plan: dict, tpl, ll
         print(f"  [注意] Premiere用XMLを更新できませんでした: {e}")
     sec = sum(to_edit_len(tl, shots))
     print(f"  手元カメラ: {len(join_over_cuts(tl, shots))}場面（合計 {sec:.0f}秒）")
-    return Multicam(cam2, shots, str(cfg.get("background", "blur")))
+    return Multicam(cam2, shots, str(cfg.get("background", "blur")), float(cfg["min_shot"]), list(plan["angles"]))
 
 
 def to_edit_len(tl: Timeline, ranges) -> list[float]:

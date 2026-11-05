@@ -81,14 +81,23 @@ class EnhanceRow(QWidget):
                                     "「明るさ・色」を「おまかせ」か「使う」にしてから押してください。")
             return
 
+        in_export = True   # 「おまかせ」のときは、テンプレートの設定で書き出しに色の補正がかかるかを調べる
+        if self.combos["color"].currentData() != "on":
+            try:
+                import rc_enhance
+                from rc_template import Template
+                in_export = bool(rc_enhance.resolve(Template(c.template.currentData()), c.mode(), {}).color)
+            except Exception:  # noqa: BLE001
+                in_export = True
+
         def done(ok):
             if ok and out.exists():
-                SampleDialog(self, out).exec()
+                SampleDialog(self, out, in_export).exec()
         self.win.runner.start("enhance.py", args, "色の補正の見本を作成中", done)
 
 
 class SampleDialog(QDialog):
-    def __init__(self, parent, img: Path):
+    def __init__(self, parent, img: Path, in_export: bool = True):
         super().__init__(parent)
         self.setWindowTitle("色の補正の見本（左: そのまま / 右: 補正後）")
         lay = QVBoxLayout(self)
@@ -104,8 +113,14 @@ class SampleDialog(QDialog):
         pic = QLabel()
         pic.setPixmap(pm)
         lay.addWidget(pic)
+        if not in_export:
+            warn = QLabel("今の設定（「明るさ・色」が「おまかせ」）では、完成動画に色の補正はかかりません。"
+                          "右の色にしたいときは、「明るさ・色」を「使う」にしてから書き出してください。")
+            warn.setWordWrap(True)
+            warn.setProperty("role", "notice")
+            lay.addWidget(warn)
         note = QLabel("補正の強さや LUT は、テンプレートの template.toml の [color] で変えられます。")
-        note.setStyleSheet("color: #555;")
+        note.setProperty("role", "sub")
         lay.addWidget(note)
         bb = QDialogButtonBox()
         close = bb.addButton("閉じる", QDialogButtonBox.RejectRole)
@@ -117,7 +132,7 @@ class SampleDialog(QDialog):
 def match_cam2(win):
     rv = win.review
     if not getattr(rv, "out", None):
-        QMessageBox.information(rv, "結果がありません", "先に荒編集をするか、「ほかの結果を開く」で結果を開いてください。")
+        QMessageBox.information(rv, "結果がありません", "先に荒編集をするか、「別の結果を開く…」で結果を開いてください。")
         return
     sess = getattr(rv, "sess", None) or {}
     if not (sess.get("args") or {}).get("cam2"):
@@ -144,6 +159,8 @@ def register(win):
     form = c.adv.parentWidget().layout()
     row, _role = form.getWidgetPosition(c.adv)
     win.enhance_row = EnhanceRow(win)
+    if hasattr(win, "lock_while_busy"):
+        win.lock_while_busy(win.enhance_row.sample)
     form.insertRow(row + 1, QLabel("声と映像の補正"), win.enhance_row)
     form.setRowVisible(win.enhance_row, c.adv.isChecked())
     c.adv.toggled.connect(lambda on: form.setRowVisible(win.enhance_row, on))
@@ -162,3 +179,5 @@ def register(win):
     b.setToolTip("2台目カメラ（スマホなど）の色を本編に寄せる LUT（.cube）を作ります。Premiere の Lumetri で使えます")
     b.clicked.connect(lambda: match_cam2(win))
     win.review.ext_bar.insertWidget(0, b)
+    if hasattr(win, "lock_while_busy"):
+        win.lock_while_busy(b, needs_out=True)

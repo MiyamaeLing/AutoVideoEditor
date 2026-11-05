@@ -39,8 +39,8 @@ class QueuePage(QWidget):
         info = QLabel("動画を順番待ちに入れて、まとめて処理します。<b>「順番に処理を始める」を押してから寝れば、朝には完成しています。</b><br>"
                       "処理中はPCがスリープしません（ノートPCは電源につないでおいてください）。途中で止まっても、"
                       "もう一度押せば続きから進みます。<br>"
-                      "<span style='color:#555'>追加するときの設定（ジャンル・AI・テンプレート・固有名詞など）は「作成」タブのものを使います。"
-                      "まとめて処理では「claude.ai に貼り付けて使う」は使えません。</span>")
+                      "<i>追加するときの設定（ジャンル・AI・テンプレート・固有名詞など）は「作成」タブのものを使います。"
+                      "まとめて処理では「claude.ai に貼り付けて使う」は使えません。</i>")
         info.setWordWrap(True)
 
         self.goal = QComboBox()
@@ -297,7 +297,8 @@ class QueuePage(QWidget):
         it = self.selected()
         if not it or not (Path(it["out"]) / "session.json").exists():
             return
-        self.win.review.load(Path(it["out"]))
+        if self.win.review.load(Path(it["out"])) is False:   # 処理中で開けなかった
+            return
         self.win.tabs.setCurrentWidget(self.win.review)
 
     def _play(self):
@@ -312,7 +313,9 @@ class QueuePage(QWidget):
         if not pend:
             QMessageBox.information(self, "順番待ちがありません", "先に動画を追加してください。")
             return False
-        if any(it["llm"] == "api" for it in pend) and not self.win.check_api_key("api"):
+        if any(it["llm"] == "api" for it in pend) and not self.win.check_api_key(
+                "api", "順番待ちには、追加したときのAIの設定（Claude APIで自動）が残っています。APIキーを使わないときは、"
+                "その動画を一覧から削除して、「作成」タブのAIの欄を「AIを使わない」にしてから追加し直してください。"):
             return False
         args = ["--queue", str(self.q.path), "run"] + (["--shutdown"] if self.shutdown.isChecked() else [])
 
@@ -345,7 +348,7 @@ def register(win):
     win.tabs.addTab(page, "まとめて処理")
     # 「作成」タブの実行ボタンの横に「順番待ちに入れる ▾」を足す
     b = QToolButton()
-    b.setText("順番待ちに入れる ▾")
+    b.setText("順番待ちに入れる")   # ▾ はメニューの矢印が自動で付く（2つ出ないように）
     b.setToolTip("今の素材と設定のまま「まとめて処理」の順番待ちに入れます（寝ている間に処理できます）")
     b.setMinimumHeight(44)
     b.setPopupMode(QToolButton.InstantPopup)

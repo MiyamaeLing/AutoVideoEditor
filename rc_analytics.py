@@ -98,18 +98,56 @@ RELINK_MSG = ("[エラー] 分析を使うには、Googleアカウントとの�
               "  画面の「分析」タブで「Googleと連携し直す」を押すか、python analytics.py --login を実行してください。")
 
 
+NO_ANALYTICS_MSG = ("[注意] 「YouTube アナリティクスのレポートを表示」の許可にチェックが入っていなかったので、"
+                    "公開後の分析は使えません（アップロードや設定はこのまま使えます）。\n"
+                    "  分析を使うときは、「分析」タブの「Googleと連携し直す」を押して、すべての項目にチェックを入れてください。")
+
+
+def _scope_list(v) -> list[str]:
+    if not v:
+        return []
+    return v.split() if isinstance(v, str) else [str(x) for x in v]
+
+
+def oauth_login(cs: Path):
+    """ブラウザで Google アカウントの許可を求め、許可された範囲で連携情報を保存する。
+
+    Google の許可の画面では項目ごとにチェックを外せる。外されると oauthlib が「Scope has changed」で
+    止まるので、それを止めずに、実際に許可された範囲（granted_scopes）を見て判断する。
+    YouTube の許可がない → 分かりやすいエラー / 分析の許可だけない → 保存して、お知らせだけ出す。
+    """
+    import os
+    import rc_youtube
+    from google.oauth2.credentials import Credentials
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
+    flow = InstalledAppFlow.from_client_secrets_file(str(cs), rc_youtube.SCOPES)
+    creds = flow.run_local_server(port=0, prompt="consent",
+                                  success_message="連携できました。このタブは閉じて、ツールに戻ってください。")
+    granted = _scope_list(getattr(creds, "granted_scopes", None)) or list(rc_youtube.SCOPES)
+    missing = [x for x in rc_youtube.YOUTUBE_SCOPES if x not in granted]
+    if missing:
+        raise SystemExit("[エラー] YouTube の動画のアップロード・設定の許可にチェックが入っていなかったため、連携できませんでした。\n"
+                         "  もう一度連携して、Google の画面で、すべての項目にチェックを入れてから「続行」を押してください。")
+    data = json.loads(creds.to_json())
+    data["scopes"] = granted   # 実際に許可された範囲で保存する（link_state / token_scopes がこれで判断する）
+    rc_youtube.token_path().write_text(json.dumps(data), encoding="utf-8")
+    if ANALYTICS_SCOPE not in granted:
+        print(NO_ANALYTICS_MSG, flush=True)
+    return Credentials.from_authorized_user_info(data)
+
+
 def relink() -> None:
     """分析の許可も含めて、Googleアカウントと連携し直す（ブラウザが開く）"""
     import rc_youtube
-    from google_auth_oauthlib.flow import InstalledAppFlow
     cs = rc_youtube.client_secret_path()
     if not cs.exists():
         raise SystemExit(f"[エラー] {cs} がありません。README の「YouTube連携の準備」を参照してください。")
     print("  ブラウザが開くので、Googleアカウントでログインして、すべての項目を許可してください…", flush=True)
-    flow = InstalledAppFlow.from_client_secrets_file(str(cs), rc_youtube.SCOPES)
-    creds = flow.run_local_server(port=0, prompt="consent",
-                                  success_message="連携できました。このタブは閉じて、ツールに戻ってください。")
-    rc_youtube.token_path().write_text(creds.to_json(), encoding="utf-8")
+    creds = oauth_login(cs)
+    if ANALYTICS_SCOPE not in _scope_list(creds.scopes):
+        raise SystemExit("[エラー] 視聴維持率を読む許可が付きませんでした。もう一度「Googleと連携し直す」を押して、"
+                         "Google の画面で、すべての項目にチェックを入れてください。")
     print("  連携し直しました（分析の許可を追加）")
 
 
@@ -146,6 +184,11 @@ def api_error_text(e) -> str:
     status = getattr(getattr(e, "resp", None), "status", None)
     content = getattr(e, "content", b"") or b""
     raw = str(e) + " " + (content.decode("utf-8", "replace") if isinstance(content, bytes) else str(content))
+    if status == 403 and ("accessnotconfigured" in raw.lower() or "service_disabled" in raw.lower()
+                          or "has not been used in project" in raw.lower()):
+        return ("[エラー] Google Cloud で「YouTube Analytics API」が有効になっていません。\n"
+                "  README の「公開後の分析」の ① にしたがって、Google Cloud のコンソールで「YouTube Analytics API」を"
+                "「有効にする」を押してください。有効にしてから使えるようになるまで、数分かかることがあります。")
     if status == 403 and ("insufficient" in raw.lower() or "scope" in raw.lower()):
         return RELINK_MSG
     if status == 403 and "quota" in raw.lower():
@@ -198,6 +241,13 @@ def _dates(published: str) -> tuple[str, str]:
     return min(start, end).isoformat(), end.isoformat()
 
 
+def _metric_rejected(e) -> bool:
+    """API が「この組み合わせの問い合わせはできない」（400）と断ったときだけ True。
+    エラーの文字には問い合わせの URL（指標の名前を含む）が入るので、文字ではなく状態コードで判断する。
+    許可・上限・サーバーの一時的な失敗（403 / 5xx など）は、そのままエラーにする"""
+    return getattr(getattr(e, "resp", None), "status", None) == 400
+
+
 def fetch_retention(yta, video_id: str, published: str) -> tuple[list[dict], dict]:
     """視聴維持率（動画の長さの1%ごと）と、全体の数字"""
     start, end = _dates(published)
@@ -207,7 +257,7 @@ def fetch_retention(yta, video_id: str, published: str) -> tuple[list[dict], dic
             metrics="audienceWatchRatio,relativeRetentionPerformance", dimensions="elapsedVideoTimeRatio",
             sort="elapsedVideoTimeRatio", **q).execute())
     except Exception as e:  # noqa: BLE001
-        if "relativeRetentionPerformance" in str(e):   # 比べる相手のデータがないときは、維持率だけ取る
+        if _metric_rejected(e):   # 比べる相手のデータがないときは、維持率だけ取る
             rows = _table(yta.reports().query(metrics="audienceWatchRatio", dimensions="elapsedVideoTimeRatio",
                                               sort="elapsedVideoTimeRatio", **q).execute())
         else:
@@ -233,25 +283,38 @@ class BodyMap:
     素材ファイルを読み直さないので、公開後に素材を別の場所へ移していても使える（誤差はフレーム単位）。
     """
 
-    def __init__(self, keep: list):
+    def __init__(self, keep: list, speedups: list | None = None):
+        """speedups: プランの早送り [{"start", "end", "speed"}]（元素材の時刻）。完成動画では
+        その区間が 1/speed の長さになる（finish.py の rc_speedup.SpeedTimeline と同じ縮め方）"""
         self.keep = [(float(s), float(e)) for s, e in keep if e > s]
-        self.starts = [s for s, _ in self.keep]
-        self.base, t = [], 0.0
-        for s, e in self.keep:
-            self.base.append(t)
-            t += e - s
+        sp = sorted((float(x["start"]), float(x["end"]), max(1.0, float(x.get("speed", 1) or 1)))
+                    for x in (speedups or []) if float(x.get("end", 0)) > float(x.get("start", 0)))
+        # 残す区間を、早送りの境目でさらに分けた小区間 (元の開始, 元の終了, 本編での開始, 倍率)
+        self.parts, t = [], 0.0
+        for ks, ke in self.keep:
+            cuts = sorted({ks, ke, *(b for s, e, _ in sp for b in (s, e) if ks < b < ke)})
+            for a, b in zip(cuts, cuts[1:]):
+                mid = (a + b) / 2
+                speed = next((v for s, e, v in sp if s <= mid < e), 1.0)
+                self.parts.append((a, b, t, speed))
+                t += (b - a) / speed
+        self.starts = [p[0] for p in self.parts]
         self.duration = t
+
+    def _o(self, part, t: float) -> float:
+        g0, g1, o0, speed = part
+        return o0 + (min(max(t, g0), g1) - g0) / speed
 
     def range(self, s: float, e: float) -> tuple[float, float] | None:
         i = max(0, bisect.bisect_right(self.starts, s) - 1)
         first = last = None
-        while i < len(self.keep) and self.keep[i][0] < e:
-            ks, ke = self.keep[i]
-            a, b = max(s, ks), min(e, ke)
+        while i < len(self.parts) and self.parts[i][0] < e:
+            g0, g1 = self.parts[i][:2]
+            a, b = max(s, g0), min(e, g1)
             if b - a > 0.05:
                 if first is None:
-                    first = self.base[i] + a - ks
-                last = self.base[i] + b - ks
+                    first = self._o(self.parts[i], a)
+                last = self._o(self.parts[i], b)
             i += 1
         return (first, last) if first is not None else None
 
@@ -266,7 +329,8 @@ def load_context(out_dir: Path | None) -> dict:
     sess = read_json(out_dir / "session.json", {})
     final = read_json(out_dir / "final_info.json", {}) or {}
     chunks = read_json(out_dir / "chunks.json", []) or []
-    bm = BodyMap(sess.get("keep", []))
+    plan = read_json(out_dir / "plan_edited.json") or read_json(out_dir / "plan_used.json") or {}
+    bm = BodyMap(sess.get("keep", []), plan.get("speedups") or [])   # 早送りで縮めた分も、完成の時刻に直す
     off = float(final.get("intro_offset", 0.0) or 0.0)
     cut = set(sess.get("cut_ids", []))
     corr = {int(k): v for k, v in (sess.get("corrections") or {}).items()}
@@ -279,7 +343,6 @@ def load_context(out_dir: Path | None) -> dict:
             span[c["id"]] = r
             ctx["lines"].append({"id": c["id"], "t": round(r[0] + off, 2), "e": round(r[1] + off, 2),
                                  "text": corr.get(c["id"], c["text"])})
-    plan = read_json(out_dir / "plan_edited.json") or read_json(out_dir / "plan_used.json") or {}
     for t in plan.get("telops", []):
         if t.get("start_id") in span:
             s = span[t["start_id"]][0]
@@ -534,6 +597,9 @@ def ai_task(name: str, system: str, user_text: str, schema: dict, llm: str, wdir
         sys.exit(f"[エラー] Claude API: {e.status_code} {e.message}")
     except anthropic.APIConnectionError as e:
         sys.exit(f"[エラー] Claude APIに接続できません: {e}")
+    except RuntimeError as e:   # 断られた・途中で切れた・返答が壊れていた → AIなしの簡単な分析に切り替える
+        print(f"  [注意] {e}\n  AIを使わない簡単な分析に切り替えます。", flush=True)
+        return None, usage
     return res, usage
 
 
@@ -903,11 +969,39 @@ def fetch_comments(yt, video_id: str, max_n: int = 300) -> list[dict]:
                         "text": ts.get("textDisplay", "") or ts.get("textOriginal", ""),
                         "likes": int(ts.get("likeCount", 0) or 0), "published": ts.get("publishedAt", ""),
                         "replies": int(sn.get("totalReplyCount", 0) or 0), "answered": bool(answered),
-                        "mine": bool(owner)})
+                        "mine": bool(owner), "_shown": len(replies)})
         token = r.get("nextPageToken")
         if not token:
             break
-    return out[:max_n]
+    out = out[:max_n]
+    # commentThreads.list の返信は一部だけのことがある（返信が多いスレッド）。自分の返信が入っていなければ、
+    # そのスレッドの返信を全部読んで確かめる（返信済みのコメントに返信案を作らないように）
+    extra = 0
+    for c in out:
+        if c["answered"] or c["mine"] or not my_channel or c["replies"] <= c.pop("_shown", 0) or extra >= 50:
+            c.pop("_shown", None)
+            continue
+        extra += 1
+        try:
+            c["answered"] = _owner_replied(yt, c["thread"], my_channel)
+        except Exception:  # noqa: BLE001  確かめられなくても、コメントの要約は続ける
+            pass
+    for c in out:
+        c.pop("_shown", None)
+    return out
+
+
+def _owner_replied(yt, parent_id: str, my_channel: str) -> bool:
+    token = None
+    for _ in range(5):   # 多くても500件まで
+        r = yt.comments().list(part="snippet", parentId=parent_id, maxResults=100, textFormat="plainText",
+                               pageToken=token).execute()
+        if any(x["snippet"].get("authorChannelId", {}).get("value") == my_channel for x in r.get("items", [])):
+            return True
+        token = r.get("nextPageToken")
+        if not token:
+            break
+    return False
 
 
 COMMENTS_SCHEMA = {
@@ -966,6 +1060,7 @@ def analyze_comments(out_dir: Path | None, video_id: str, llm: str = "api", effo
                                             "comments": comments})
         remember_comment_dir(wdir)
     print(f"  コメント {len(comments)}件")
+    usage = {"in": 0, "out": 0}
     if not comments:
         res = {"summary": "まだコメントがありません。", "praise": [], "requests": [], "questions": [], "concerns": [],
                "replies": [], "skip": []}
@@ -1006,6 +1101,9 @@ def analyze_comments(out_dir: Path | None, video_id: str, llm: str = "api", effo
     write_comments_report(wdir / "comments.md", res, comments)
     print("■ コメントの要約ができました")
     print(f"  {wdir / 'comments.md'}")
+    if usage["in"]:
+        import rc_llm
+        print(f"  Claude API: 約${rc_llm.cost_usd(usage):.2f}")
     return res
 
 

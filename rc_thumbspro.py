@@ -94,10 +94,27 @@ _cascades: dict[str, object] = {}
 
 
 def _cascade(name: str):
+    """日本語を含むフォルダでも読めるように、ファイルは Python で読んで中身を渡す
+    （Windows の OpenCV は、ASCII 以外の文字を含むパスを開けないため。rc_shorts.face_detector と同じ方法）"""
     if name not in _cascades:
-        c = cv2.CascadeClassifier(os.path.join(cv2.data.haarcascades, name))
-        _cascades[name] = None if c.empty() else c
+        c = None
+        try:
+            xml = (Path(cv2.data.haarcascades) / name).read_text(encoding="utf-8")
+            fs = cv2.FileStorage(xml, cv2.FILE_STORAGE_READ | cv2.FILE_STORAGE_MEMORY)
+            c = cv2.CascadeClassifier()
+            if not c.read(fs.getFirstTopLevelNode()) or c.empty():
+                c = None
+        except Exception:  # noqa: BLE001
+            c = None
+        if c is None:
+            _note("[注意] 顔の検出に使うデータを読み込めませんでした。顔で候補を選ぶ処理と、人物の切り抜きは使いません。")
+        _cascades[name] = c
     return _cascades[name]
+
+
+def _read_onnx(path) -> object:
+    """ONNX のモデルを、ファイルの中身（バイト列）から読む（日本語を含むパスでも読めるように）"""
+    return cv2.dnn.readNetFromONNX(np.frombuffer(Path(path).read_bytes(), np.uint8))
 
 
 def detect_faces(img: Image.Image) -> list[dict]:
@@ -256,7 +273,7 @@ def download_model(force: bool = False, timeout: float = 30.0) -> Path | None:
             if not _valid_model(part):
                 raise OSError("ダウンロードしたファイルが小さすぎます")
             if cv2 is not None:
-                cv2.dnn.readNetFromONNX(str(part))     # 読めることを確かめる
+                _read_onnx(part)     # 読めることを確かめる
             os.replace(part, dst)
             fail.unlink(missing_ok=True)
             print(f"  ダウンロードしました: {dst}")
@@ -295,7 +312,7 @@ def _model_prob(rgb: np.ndarray, model: Path) -> np.ndarray | None:
     key = str(model)
     try:
         if key not in _nets:
-            _nets[key] = cv2.dnn.readNetFromONNX(key)
+            _nets[key] = _read_onnx(key)
         net = _nets[key]
         x = cv2.resize(rgb, (MODEL_INPUT, MODEL_INPUT), interpolation=cv2.INTER_AREA).astype(np.float32) / 255.0
         x = (x - 0.5) / 0.5

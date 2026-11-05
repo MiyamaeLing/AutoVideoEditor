@@ -151,7 +151,7 @@ class AnglePanel(QWidget):
                               f"行をクリックすると再生します。時刻はダブルクリックで直せます。"
                               f"{cfg['min_shot']:.0f}秒より短い切り替えは、書き出しのときにまとめます。")
         for b in (self.b_auto, self.b_ai, self.b_add):
-            b.setEnabled(bool(self.rv.out) and (self.rv.out / "plan_used.json").exists())
+            b.setEnabled(bool(self.rv.out) and (self.rv.out / "plan_used.json").exists() and not self.win.runner.busy)
         self.b_del.setEnabled(n > 0)
 
     def _template(self):
@@ -284,7 +284,7 @@ class AnglePanel(QWidget):
         if not (rv.out / "plan_used.json").exists():
             QMessageBox.information(self, "演出プランがありません", "先に「演出プランを作る」を押してください。")
             return
-        if ai and not self.win.check_api_key("api"):
+        if ai and not self.win.check_api_key("api", "APIキーなしで選び直すときは「自動で選び直す」を押してください。"):
             return
         rv._save_plan_edits()   # 表のほかの手直し（テロップなど）が消えないように
         args = [str(rv.out), "--template", rv._template(), "--llm", "api" if ai else "none",
@@ -303,6 +303,7 @@ def register(win):
     rv.plan_tabs.addTab(panel, TAB_NAME)
     rv.plan_tabs.setTabVisible(rv.plan_tabs.indexOf(panel), False)
     rv.angle_panel = panel
+    win.runner.busy_changed.connect(lambda _b: panel._update_note())   # 処理中は「追加」「選び直す」を押せない
 
     # 演出の表の読み込み・保存に、カメラの表も加える（gui.py の処理はそのまま使う）
     orig_fill, orig_collect, orig_rows = rv._fill_plan, rv._collect_plan, rv._plan_rows

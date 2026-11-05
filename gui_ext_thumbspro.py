@@ -85,3 +85,6 @@ def register(win):
     a2 = menu.addAction("人物の切り抜きデザインを画像で試す…")
     a2.triggered.connect(try_image)
     win.thumbspro_actions = (a1, a2)
+    if hasattr(win, "lock_while_busy"):
+        for a in (a1, a2):
+            win.lock_while_busy(a)

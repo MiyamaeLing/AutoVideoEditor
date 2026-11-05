@@ -19,8 +19,8 @@ import rc_mv
 
 SONG_FILTER = "曲（音声）ファイル (*.mp3 *.wav *.m4a *.aac *.flac *.ogg *.MP3 *.WAV *.M4A);;すべて (*.*)"
 ORDERS = [
-    ("auto", "おまかせ", "動きの量・明るさで自動で選びます。盛り上がる所ほど動きのある絵を使います。"),
-    ("ai", "AIにおまかせ", "Claudeが素材の代表フレームを見て、曲の雰囲気・場面に合う順番を考えます（API料金がかかります）。"),
+    ("auto", "おまかせ（動き・明るさで自動）", "動きの量・明るさで自動で選びます。盛り上がる所ほど動きのある絵を使います。"),
+    ("ai", "AIが選ぶ（Claude）", "Claudeが素材の代表フレームを見て、曲の雰囲気・場面に合う順番を考えます（API料金がかかります）。"),
     ("files", "撮った順", "撮影した順番（分からなければファイル名の順）に、曲の頭から最後まで並べます。"),
 ]
 PACES = [("normal", "ふつう"), ("fast", "細かめ（速い曲・激しい曲）"), ("slow", "ゆったり（バラード）")]
@@ -209,7 +209,7 @@ class MvTab(QWidget):
         orow = QHBoxLayout()
         self.order_desc = QLabel()
         self.order_desc.setWordWrap(True)
-        self.order_desc.setStyleSheet("color: #555;")
+        self.order_desc.setProperty("role", "sub")
         for i, (key, label, desc) in enumerate(ORDERS):
             rb = QRadioButton(label)
             rb.setProperty("key", key)
@@ -225,7 +225,7 @@ class MvTab(QWidget):
         ob.addWidget(self.order_desc)
         form.addRow("素材の選び方", ob)
         self.note = QLineEdit(st.value("mv/note", ""))
-        self.note.setPlaceholderText("例: 夏の終わり・青春・疾走感のあるロック（AIにおまかせのときに使います）")
+        self.note.setPlaceholderText("例: 夏の終わり・青春・疾走感のあるロック（「AIが選ぶ」のときに使います）")
         form.addRow("曲の雰囲気", self.note)
         self.pace = self._combo(PACES, st.value("mv/pace", "normal"))
         self.size = self._combo(SIZES, st.value("mv/size", "1920x1080"))
@@ -268,7 +268,7 @@ class MvTab(QWidget):
         self.info.setStyleSheet("color: #2D3748;")
         self.b_play = QPushButton("MVラフを再生")
         self.b_play.clicked.connect(self._play)
-        self.b_xml = QPushButton("Premiere用XML")
+        self.b_xml = QPushButton("Premiere用XMLを開く")
         self.b_xml.clicked.connect(self._xml)
         self.b_folder = QPushButton("フォルダを開く")
         self.b_folder.clicked.connect(lambda: self.out_dir() and G.open_path(self.out_dir()))
@@ -376,7 +376,8 @@ class MvTab(QWidget):
         if not self.files.count():
             QMessageBox.information(self, "素材がありません", "映像素材の動画（またはフォルダ）をドラッグ＆ドロップしてください。")
             return
-        if self.order() == "ai" and not self.win.check_api_key("api"):
+        if self.order() == "ai" and not self.win.check_api_key(
+                "api", "APIキーなしで作るときは、素材の選び方を「おまかせ（動き・明るさで自動）」にしてください。"):
             return
         args = [args[0], *map(str, self.files.paths()), *args[1:],
                 "--order", self.order(), "--pace", self.pace.currentData(), "--size", self.size.currentData(),

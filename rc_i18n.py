@@ -352,8 +352,8 @@ class Claude:
             sys.exit(f"[エラー] Claude APIに接続できません: {e}")
         except RuntimeError as e:
             sys.exit(f"[エラー] {e}")
-        self.usage["in"] += usage["in"]
-        self.usage["out"] += usage["out"]
+        for k in usage:
+            self.usage[k] = self.usage.get(k, 0) + usage[k]
         return res
 
 
@@ -688,6 +688,9 @@ def prepare_for_youtube(meta: dict, log=print) -> dict:
             if translate_srt(out_dir, cfg, claude if _has_key() else None, log) is None:
                 sys.exit(f"[エラー] {cfg['name_ja']}の字幕が、今の完成動画の字幕に合っていません。"
                          "先に translate.py で翻訳し直してください（ANTHROPIC_API_KEY が必要です）。")
+    if claude.usage["in"]:   # 訳し直したときは料金も出す（まとめて処理の合計にも入る）
+        import rc_llm
+        log(f"  Claude API: 約${rc_llm.cost_usd(claude.usage):.2f}")
     return load_json(out_dir / TRANSLATIONS, {})
 
 

@@ -221,7 +221,7 @@ class TemplateEditor(QDialog):
         self.tabs.currentChanged.connect(lambda i: self._show_panel(self.forms[i].panel))
         note = QLabel("色のボタンを押すと色を選べます。変えるとすぐ右の見本が変わります。\n"
                       "保存するまで、元のテンプレートは変わりません。")
-        note.setStyleSheet("color: #555;")
+        note.setProperty("role", "sub")
         note.setWordWrap(True)
         left = QVBoxLayout()
         left.addWidget(self.tabs, 1)
@@ -264,7 +264,7 @@ class TemplateEditor(QDialog):
             strip.addWidget(b, i // 4, i % 4)
             self.thumbs[key] = b
         self.status = QLabel("")
-        self.status.setStyleSheet("color: #555;")
+        self.status.setProperty("role", "sub")
         right = QVBoxLayout()
         right.addLayout(bg_row)
         right.addWidget(self.big_title)
@@ -413,7 +413,7 @@ class TemplateEditor(QDialog):
             self.status.setText(f"見本を作れませんでした: {err}")
             self.status.setStyleSheet("color: #C53030;")
             return
-        self.status.setStyleSheet("color: #555;")
+        self.status.setProperty("role", "sub")
         self.status.setText("見本は本番の書き出しと同じ方法で作っています。")
         self.images = res
         for key, b in self.thumbs.items():
@@ -517,6 +517,13 @@ class TemplateEditor(QDialog):
         self.timer.stop()
         e.accept()
 
+    def reject(self):
+        """Esc で閉じたときも、保存していない変更を確かめる（QDialog は Esc では closeEvent を通らないため）"""
+        if not self._ask_discard():
+            return
+        self.timer.stop()
+        super().reject()
+
 
 class SectionForm(QWidget):
     """1つの部分（字幕・テロップ・章カード・サムネイル）の項目"""
@@ -536,12 +543,12 @@ class SectionForm(QWidget):
         if panel == "thumb":
             n = QLabel("サムネイルは、書き出しのあとに自動で作られる案（「サムネイル」画面）に使われます。")
             n.setWordWrap(True)
-            n.setStyleSheet("color: #555;")
+            n.setProperty("role", "sub")
             self.form.addRow(n)
         if path[0] == "telop":
             n = QLabel("「位置」が真ん中のときは「画面の端からの距離」は使われません。")
             n.setWordWrap(True)
-            n.setStyleSheet("color: #555;")
+            n.setProperty("role", "sub")
             self.form.addRow(n)
 
     def sec(self) -> dict:
@@ -727,7 +734,8 @@ class ProposeDialog(QDialog):
         self.cards = QHBoxLayout(self.cards_box)
         self.message = QLabel("雰囲気を入れて「3つの案を作る」を押してください。下の「進み具合」に経過が出ます"
                               "（AIの返事まで1〜2分かかることがあります）。")
-        self.message.setStyleSheet("color: #555; padding: 30px;")
+        self.message.setProperty("role", "sub")
+        self.message.setStyleSheet("padding: 30px;")
         self.message.setAlignment(Qt.AlignCenter)
         self.message.setWordWrap(True)
 
@@ -1012,3 +1020,5 @@ def register(win):
         win.review.ext_bar.insertWidget(0, b_ai)
         win.review.ext_bar.insertWidget(0, b_edit)
     win.design_buttons = (b_edit, b_ai)
+    if hasattr(win, "lock_while_busy"):
+        win.lock_while_busy(b_ai)

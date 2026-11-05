@@ -53,6 +53,7 @@ def cmd_check(args) -> None:
 def cmd_compare(args) -> None:
     tpl = Template(args.template)
     ov = _overrides(args)
+    in_export = rc_enhance.resolve(tpl, args.mode, ov).color   # 完成動画の書き出しで色の補正がかかるか
     ov.setdefault("color", True)
     st = rc_enhance.resolve(tpl, args.mode, ov)
     if not st.color:
@@ -61,6 +62,9 @@ def cmd_compare(args) -> None:
     out = Path(args.out).resolve() if args.out else video.parent / f"{video.stem}_補正の比較.jpg"
     rc_enhance.compare_image(video, st, out, args.time)
     print(f"■ 比較画像を作りました（左: そのまま / 右: 補正後）: {out}")
+    if not in_export:
+        print("  [お知らせ] 今の設定では、完成動画に色の補正はかかりません（これは見本です）。"
+              "使うときは「明るさ・色」を「使う」にするか、--color on を付けてください。")
 
 
 def cmd_cam2(args) -> None:

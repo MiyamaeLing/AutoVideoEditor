@@ -104,7 +104,7 @@ class SearchTab(QWidget):
         r2.addWidget(go)
         r2.addWidget(self.inc_cut)
         self.info = QLabel("")
-        self.info.setStyleSheet("color: #555;")
+        self.info.setProperty("role", "sub")
 
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["動画", "時刻", "発言（前後の発言）"])
@@ -146,7 +146,7 @@ class SearchTab(QWidget):
         b_play.clicked.connect(lambda: self.play(self.table.currentRow()))
         b_stop = QPushButton("■ 停止")
         b_stop.clicked.connect(lambda: self.player and self.player.pause())
-        self.b_open = QPushButton("確認タブで開く")
+        self.b_open = QPushButton("「確認・仕上げ」で開く")
         self.b_open.setToolTip("この動画の荒編集を「確認・仕上げ」タブで開きます（ダブルクリックでも開きます）")
         self.b_open.clicked.connect(lambda: self.open_in_review(self.table.currentRow()))
         pr = QHBoxLayout()
@@ -290,7 +290,8 @@ class SearchTab(QWidget):
         if self.player:
             self.player.pause()
         rv = self.win.review
-        rv.load(folder)
+        if rv.load(folder) is False:   # 処理中で開けなかった（理由は rv.load が知らせる）
+            return
         self.win.tabs.setCurrentWidget(rv)
         rv.tabs.setCurrentIndex(0)
         rv.filter.setCurrentIndex(1)   # すべての発言を表示
@@ -304,3 +305,5 @@ class SearchTab(QWidget):
 def register(win):
     win.search_tab = SearchTab(win)
     win.tabs.addTab(win.search_tab, "素材検索")
+    if hasattr(win, "lock_while_busy"):
+        win.lock_while_busy(win.search_tab.b_index)

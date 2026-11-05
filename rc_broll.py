@@ -785,7 +785,8 @@ def broll_tracks_xml(placements: list[Placement], c: dict, tpl, seq_fps: Fractio
 
 def _video_fps(path: Path) -> Fraction | None:
     p = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=avg_frame_rate",
-                        "-of", "csv=p=0", str(path)], capture_output=True, text=True)
+                        "-of", "csv=p=0", str(path)], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
     try:
         r = Fraction(p.stdout.strip())
         return r if r > 0 else None

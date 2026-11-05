@@ -3,7 +3,7 @@
 - 行ごとに「使う／使わない」と速さ（×2〜×8、タイムラプス）を選べる
 - 行をクリックすると、その速さで再生する
 - 表の内容は、テロップなどと同じく plan_edited.json に保存され、書き出しで使われる
-- 「早送り入りXML」ボタンで、Premiere 用の XML（速度入り）を作る
+- 「Premiere用XML（早送り入り）」ボタンで、Premiere 用の XML（速度入り）を作る
 """
 from __future__ import annotations
 
@@ -188,7 +188,7 @@ def register(win):
     rv._fill_plan, rv._collect_plan, rv._plan_rows, rv.play_range = fill_plan, collect_plan, plan_rows, play_range
 
     # 早送り入りの Premiere 用 XML
-    b = QPushButton("早送り入りXML")
+    b = QPushButton("Premiere用XML（早送り入り）")
     b.setToolTip("「早送り」の表の速さを入れた、Premiere 用の XML を作ります（<名前>_早送り入り.xml）")
 
     def make_xml():
@@ -201,7 +201,7 @@ def register(win):
         def done(ok):
             xs = list(rv.out.glob("*_早送り入り.xml"))
             if ok and xs:
-                QMessageBox.information(rv, "早送り入りXML", f"作りました。Premiere Pro の「ファイル → 読み込み」で"
+                QMessageBox.information(rv, "Premiere用XML（早送り入り）", f"作りました。Premiere Pro の「ファイル → 読み込み」で"
                                         f"選んでください。\n\n{xs[0]}")
         win.runner.start("speedup.py", [str(rv.out), "--xml", "--template", rv._template()], "早送り入りXMLを作成中",
                          done)

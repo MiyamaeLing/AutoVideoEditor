@@ -447,7 +447,8 @@ def analyze(video: Path, crop_frac: float, cut_times: list[float]) -> list[tuple
 
 def probe_size(video: Path) -> tuple[int, int]:
     p = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
-                        "-of", "csv=p=0:s=x", str(video)], capture_output=True, text=True)
+                        "-of", "csv=p=0:s=x", str(video)], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
     w, h = (int(v) for v in p.stdout.strip().split("x")[:2])
     return w, h
 

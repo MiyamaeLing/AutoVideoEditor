@@ -715,7 +715,8 @@ def match_cam2(out_dir: Path, strength: float = 0.8, samples: int = 16) -> Path:
 # ================================================================ 補正前後の比較
 def _duration(path: Path) -> float:
     p = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
     try:
         return float(p.stdout.strip())
     except ValueError:

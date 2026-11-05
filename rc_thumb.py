@@ -109,7 +109,9 @@ def candidate_times(sess: dict, tl: Timeline, chunks: dict, decisions: dict, pla
         for p in tl.pieces:
             s, e = p.seq_start / float(tl.fps), p.seq_end / float(tl.fps)
             if s <= ot < e:
-                want.append((p.g_in + (ot - s), "全体から"))
+                # 早送り（rc_speedup.SpeedTimeline）の区間は、完成の1秒が元素材の「倍率」秒にあたる
+                speed = (p.g_out - p.g_in) / (e - s) if e > s else 1.0
+                want.append((min(p.g_out - 0.01, p.g_in + (ot - s) * max(1.0, speed)), "全体から"))
                 break
     out: list[tuple[float, str]] = []
     for t, why in want:

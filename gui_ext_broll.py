@@ -50,7 +50,7 @@ class BrollPanel(QWidget):
         self.b_auto.setToolTip("AIが素材を見て、どの発言のときに出すかを決めます（今の Bロールの表は置き換わります）")
         self.b_add = QPushButton("素材を1つ足す…")
         self.b_add.setToolTip("画像・動画を選んで、出したい発言を選びます")
-        self.b_xml = QPushButton("Bロール入りのXMLを作る")
+        self.b_xml = QPushButton("Premiere用XML（Bロール入り）")
         self.b_xml.setToolTip("Premiere Pro 用に、荒編集のシーケンスへ Bロールを重ねた XML を作ります")
         self.b_pick.clicked.connect(self.pick_folder)
         self.b_auto.clicked.connect(lambda: self.assign())
@@ -74,7 +74,7 @@ class BrollPanel(QWidget):
         note = QLabel("全画面＝画面いっぱいに出す / ワイプ＝画面の隅に小さく出す。写真はゆっくり寄ります。"
                       "動画の音は使いません。長さ「おまかせ」は発言の長さに合わせます。")
         note.setWordWrap(True)
-        note.setStyleSheet("color: #555;")
+        note.setProperty("role", "sub")
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addLayout(top)

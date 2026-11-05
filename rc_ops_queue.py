@@ -58,8 +58,58 @@ class Queue:
         return []
 
     def save(self, items: list[dict]) -> None:
+        """書き込む。一時ファイルの名前を毎回変えて、画面とまとめて処理が同時に書いてもぶつからないようにする"""
+        import json
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        rc_ops.write_json_atomic(self.path, {"version": 1, "items": items})
+        tmp = self.path.with_name(f"{self.path.name}.{os.getpid()}.{uuid.uuid4().hex[:6]}.tmp")
+        tmp.write_text(json.dumps({"version": 1, "items": items}, ensure_ascii=False, indent=1), encoding="utf-8")
+        for _ in range(40):
+            try:
+                os.replace(tmp, self.path)
+                return
+            except PermissionError:   # Windows でほかのプロセスが一瞬開いているとき
+                time.sleep(0.05)
+        try:
+            os.replace(tmp, self.path)
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    def _edit_lock_path(self) -> Path:
+        return self.path.with_name(self.path.name + ".edit.lock")
+
+    def _lock(self):
+        """「読む → 書き換える → 保存」の間、ほかのプロセスが同時に書き換えないようにする（相手の更新が消えないように）"""
+        import contextlib
+
+        @contextlib.contextmanager
+        def held():
+            lp = self._edit_lock_path()
+            lp.parent.mkdir(parents=True, exist_ok=True)
+            fd = None
+            for _ in range(200):   # 長くても10秒ほど待つ
+                try:
+                    fd = os.open(str(lp), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                    break
+                except FileExistsError:
+                    try:
+                        if time.time() - lp.stat().st_mtime > 10:   # 落ちたプロセスが残したもの
+                            lp.unlink(missing_ok=True)
+                            continue
+                    except OSError:
+                        pass
+                    time.sleep(0.05)
+                except PermissionError:
+                    time.sleep(0.05)
+            try:
+                yield
+            finally:
+                if fd is not None:
+                    os.close(fd)
+                    try:
+                        lp.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+        return held()
 
     def add(self, inputs: list[str], goal: str = "finish", mode: str = "talk", llm: str = "api",
             cam2: list[str] | None = None, template: str | None = None, glossary: list[str] | None = None,
@@ -81,35 +131,39 @@ class Queue:
             "status": "waiting", "steps_done": [], "message": "", "added": rc_ops.now_text(),
             "started": "", "finished": "", "elapsed": 0, "result": {},
         }
-        items = self.load()
-        items.append(item)
-        self.save(items)
+        with self._lock():
+            items = self.load()
+            items.append(item)
+            self.save(items)
         return item
 
     def get(self, item_id: str) -> dict | None:
         return next((it for it in self.load() if it["id"] == item_id), None)
 
     def update(self, item_id: str, **fields) -> dict | None:
-        items = self.load()
-        for it in items:
-            if it["id"] == item_id:
-                it.update(fields)
-                self.save(items)
-                return it
+        with self._lock():
+            items = self.load()
+            for it in items:
+                if it["id"] == item_id:
+                    it.update(fields)
+                    self.save(items)
+                    return it
         return None
 
     def remove(self, ids) -> None:
         ids = set(ids)
-        self.save([it for it in self.load() if it["id"] not in ids])
+        with self._lock():
+            self.save([it for it in self.load() if it["id"] not in ids])
 
     def move(self, item_id: str, delta: int) -> None:
-        items = self.load()
-        i = next((k for k, it in enumerate(items) if it["id"] == item_id), None)
-        if i is None:
-            return
-        j = max(0, min(len(items) - 1, i + delta))
-        items.insert(j, items.pop(i))
-        self.save(items)
+        with self._lock():
+            items = self.load()
+            i = next((k for k, it in enumerate(items) if it["id"] == item_id), None)
+            if i is None:
+                return
+            j = max(0, min(len(items) - 1, i + delta))
+            items.insert(j, items.pop(i))
+            self.save(items)
 
     def retry(self, item_id: str, from_start: bool = False) -> None:
         fields = {"status": "waiting", "message": "", "finished": ""}
@@ -118,9 +172,10 @@ class Queue:
         self.update(item_id, **fields)
 
     def clear_done(self) -> int:
-        items = self.load()
-        keep = [it for it in items if it["status"] != "done"]
-        self.save(keep)
+        with self._lock():
+            items = self.load()
+            keep = [it for it in items if it["status"] != "done"]
+            self.save(keep)
         return len(items) - len(keep)
 
     def pending(self) -> list[dict]:

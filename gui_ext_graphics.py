@@ -8,7 +8,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QCheckBox, QDialog, QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout
 
 import rc_graphics
 
@@ -29,7 +29,7 @@ class GraphicsDialog(QDialog):
     """作った動画の静止画を並べて見せる"""
 
     def __init__(self, parent, title: str, images: list[Path], videos: list[tuple[str, Path]], tdir: Path,
-                 note: str = ""):
+                 note: str = "", toggles: tuple[str, ...] = ()):
         super().__init__(parent)
         self.setWindowTitle(title)
         lay = QVBoxLayout(self)
@@ -47,6 +47,19 @@ class GraphicsDialog(QDialog):
                 lab.setText(f"（{p.name} がありません）")
             row.addWidget(lab)
         lay.addLayout(row)
+        # 完成動画で使うかどうか（template.toml の enabled を、ここで切り替えられる）
+        self.toggles = {}
+        if toggles:
+            tl = QHBoxLayout()
+            tl.addWidget(QLabel(f"テンプレート「{tdir.name}」で:"))
+            for sec in toggles:
+                cb = QCheckBox(rc_graphics.TOGGLES.get(sec, sec))
+                cb.setChecked(rc_graphics.get_enabled(tdir, sec))
+                cb.toggled.connect(lambda on, sec=sec, cb=cb: self._toggle(tdir, sec, on, cb))
+                tl.addWidget(cb)
+                self.toggles[sec] = cb
+            tl.addStretch()
+            lay.addLayout(tl)
         bb = QHBoxLayout()
         for text, v in videos:
             b = QPushButton(text)
@@ -60,6 +73,18 @@ class GraphicsDialog(QDialog):
         close.clicked.connect(self.accept)
         bb.addWidget(close)
         lay.addLayout(bb)
+
+
+    def _toggle(self, tdir: Path, sec: str, on: bool, cb):
+        try:
+            ok = rc_graphics.set_enabled(tdir, sec, on)
+        except OSError as e:
+            ok = False
+            QMessageBox.warning(self, "保存できません", f"template.toml を書き換えられませんでした: {e}")
+        if not ok:
+            cb.blockSignals(True)
+            cb.setChecked(rc_graphics.get_enabled(tdir, sec))
+            cb.blockSignals(False)
 
 
 def _template_dir(win) -> Path | None:
@@ -82,9 +107,10 @@ def make_clips(win):
             return
         GraphicsDialog(win, "オープニング・エンディング", [gen / "intro_preview.png", gen / "outro_preview.png"],
                        [("オープニングを再生", gen / "intro.mp4"), ("エンディングを再生", gen / "outro.mp4")], tdir,
-                       "テンプレートの [opening] / [ending] で enabled = true にすると、完成動画の最初と最後に自動で付きます。"
+                       "下のチェックを入れると、完成動画の最初と最後に自動で付きます"
+                       "（テンプレートの [opening] / [ending] の enabled が切り替わります）。"
                        "エンディングの枠には、YouTube Studio の「終了画面」で動画とチャンネル登録の要素を置いてください"
-                       "（位置は generated フォルダの「outro_終了画面の枠.json」）。").exec()
+                       "（位置は generated フォルダの「outro_終了画面の枠.json」）。", ("opening", "ending")).exec()
     win.runner.start("graphics.py", ["--template", str(tdir)], "オープニング・エンディングを作成中", done)
 
 
@@ -100,7 +126,7 @@ def make_samples(win):
             return
         GraphicsDialog(win, "テロップの種類と章の進み具合の見本",
                        [gen / f"telop_sample_{i}.png" for i in range(1, 5)],
-                       [("動画で見る", gen / "telop_samples.mp4")], tdir, HINT).exec()
+                       [("動画で見る", gen / "telop_samples.mp4")], tdir, HINT, ("progress",)).exec()
     win.runner.start("graphics.py", ["--template", str(tdir), "--samples"], "テロップの見本を作成中", done)
 
 
@@ -114,3 +140,6 @@ def register(win):
     if table is not None:
         table.setToolTip(HINT)
     win.graphics_actions = (a1, a2)
+    if hasattr(win, "lock_while_busy"):
+        for a in (a1, a2):
+            win.lock_while_busy(a)

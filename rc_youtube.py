@@ -210,7 +210,6 @@ def get_service(interactive: bool = True):
     from google.auth.exceptions import RefreshError
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
     from googleapiclient.discovery import build
 
     creds = None
@@ -234,10 +233,8 @@ def get_service(interactive: bool = True):
         if not cs.exists():
             raise SystemExit(f"[エラー] {cs} がありません。README の「YouTube連携の準備」を参照してください。")
         print("  ブラウザが開くので、Googleアカウントでログインして許可してください…", flush=True)
-        flow = InstalledAppFlow.from_client_secrets_file(str(cs), SCOPES)
-        creds = flow.run_local_server(port=0, prompt="consent",
-                                      success_message="連携できました。このタブは閉じて、ツールに戻ってください。")
-        tp.write_text(creds.to_json(), encoding="utf-8")
+        import rc_analytics   # 一部の項目のチェックを外されても止まらないように、許可された範囲で保存する
+        creds = rc_analytics.oauth_login(cs)
     return build("youtube", "v3", credentials=creds, static_discovery=True)
 
 
