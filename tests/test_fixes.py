@@ -424,7 +424,7 @@ shown = []
 QMessageBox.warning = staticmethod(lambda *a, **k: shown.append(("warning", a[2] if len(a) > 2 else "")))
 QMessageBox.information = staticmethod(lambda *a, **k: shown.append(("info", a[2] if len(a) > 2 else "")))
 QMessageBox.question = staticmethod(lambda *a, **k: QMessageBox.No)
-w = gui.MainWindow(); w.resize(1300, 860); w.show()
+w = gui.MainWindow(); w.resize(1300, 860); w.show(); w.create.llm.setCurrentIndex(w.create.llm.findData("api", 257))  # 「Claude APIで自動」
 # 拡張（gui_ext_*.py）が項目を足したメニューだけ出す（何も足していないメニューは出さない）
 res["menus_hidden"] = all(m.menuAction().isVisible() == bool(m.actions()) for m in (w.tools_menu, w.help_menu))
 out = Path(OUT)
@@ -475,7 +475,7 @@ w2.close()
 # --- APIキーがないときは、AIを使う処理の前に知らせる ---
 w.settings.setValue("api_key", "")
 os.environ.pop("ANTHROPIC_API_KEY", None)
-w.create.llm.setCurrentIndex(w.create.llm.findData("api"))
+w.create.llm.setCurrentIndex(w.create.llm.findData("api", 257))
 calls.clear(); shown.clear()
 rv.make_plan()
 res["key_check"] = (not calls) and any("APIキー" in s for _, s in shown)

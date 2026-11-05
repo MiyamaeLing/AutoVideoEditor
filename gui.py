@@ -86,7 +86,8 @@ def open_path(p: Path):
 def has_api_key(settings: QSettings) -> bool:
     """「Claude で自動」で使えるか（サブスクの Claude Code なら、キーは要らない）"""
     if use_claude_code(settings):
-        return True
+        import rc_cc
+        return rc_cc.available()
     return bool(settings.value("api_key", "") or os.environ.get("ANTHROPIC_API_KEY"))
 
 

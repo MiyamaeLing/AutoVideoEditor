@@ -446,7 +446,7 @@ def question(*a, **k):
     return answer["v"]
 QMessageBox.question = staticmethod(question)
 A, B = Path(OUT_A), Path(OUT_B)
-w = gui.MainWindow(); w.resize(1300, 860); w.show()
+w = gui.MainWindow(); w.resize(1300, 860); w.show(); w.create.llm.setCurrentIndex(w.create.llm.findData("api", 257))  # 「Claude APIで自動」
 rv = w.review
 rv.load(A)
 for _ in range(5):
@@ -503,7 +503,7 @@ res["saved_on_close"] = (B / "plan_edited.json").exists() and \
     json.loads((B / "plan_edited.json").read_text(encoding="utf-8"))["telops"][0]["text"] == "閉じる前の手直し"
 
 # --- Esc で閉じても保存の確認が出る（話者・テンプレート） ---
-w = gui.MainWindow(); w.show(); rv = w.review; rv.load(A)
+w = gui.MainWindow(); w.show(); rv = w.review; rv.load(A); w.create.llm.setCurrentIndex(w.create.llm.findData("api", 257))  # 「Claude APIで自動」
 w.runner.start = fake_start
 import gui_ext_speakers, gui_ext_design
 dlg = gui_ext_speakers.SpeakerDialog(w)
@@ -525,7 +525,7 @@ QMessageBox.question = staticmethod(question)
 # --- 「YouTubeへ」の翻訳: APIキーがないときは貼り付けで訳す ---
 w.settings.setValue("api_key", "")
 os.environ.pop("ANTHROPIC_API_KEY", None)
-w.create.llm.setCurrentIndex(w.create.llm.findData("api"))
+w.create.llm.setCurrentIndex(w.create.llm.findData("api", 257))
 yd = gui.YouTubeDialog(rv)
 yd.loc.setChecked(True)
 dones.clear()

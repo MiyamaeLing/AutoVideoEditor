@@ -428,7 +428,7 @@ shown = []
 QMessageBox.warning = staticmethod(lambda *a, **k: shown.append(a[2] if len(a) > 2 else ""))
 QMessageBox.information = staticmethod(lambda *a, **k: shown.append(a[2] if len(a) > 2 else ""))
 QMessageBox.question = staticmethod(lambda *a, **k: QMessageBox.Yes)
-w = gui.MainWindow(); w.resize(1300, 860); w.show()
+w = gui.MainWindow(); w.resize(1300, 860); w.show(); w.create.llm.setCurrentIndex(w.create.llm.findData("api", 257))  # 「Claude APIで自動」
 out = Path(OUT)
 rv = w.review
 rv.load(out)

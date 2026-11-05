@@ -374,7 +374,7 @@ shown = []
 QMessageBox.information = staticmethod(lambda *a, **k: shown.append(a[2] if len(a) > 2 else ""))
 QMessageBox.warning = staticmethod(lambda *a, **k: shown.append(a[2] if len(a) > 2 else ""))
 app = QApplication([])
-w = gui.MainWindow(); w.resize(1200, 900); w.show()
+w = gui.MainWindow(); w.resize(1200, 900); w.show(); w.create.llm.setCurrentIndex(w.create.llm.findData("api", 257))  # 「Claude APIで自動」
 res = {"ext": "gui_ext_mv" in w.extensions, "has_tab": hasattr(w, "mv_tab")}
 res["tab_names"] = [w.tabs.tabText(i) for i in range(w.tabs.count())]
 # 拡張（gui_ext_*.py）が項目を足したメニューだけ出す（何もないメニューは出さない）
