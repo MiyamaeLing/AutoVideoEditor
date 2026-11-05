@@ -14,3 +14,8 @@ templates/*/bgm/**/*.wav
 templates/*/bgm/**/*.m4a
 tests/_fixtures/
 .claude/
+# 最新版への更新（update.py）が作るもの
+.installed_version.json
+.installed_manifest.json
+_update_backup/
+_update_tmp/

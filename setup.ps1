@@ -112,6 +112,8 @@ if (-not (Test-Path $vpy)) {
 & $vpy -m pip install -r "$App\requirements.txt"
 if ($LASTEXITCODE -ne 0) { Fail "ライブラリのインストールに失敗しました（回線が不安定なら、もう一度 setup.bat を実行してください）。" }
 Ok "ライブラリのインストール完了"
+# 「最新版に更新」で、自分で直したテンプレートを見分けられるように、今のファイルの印を記録しておく（初回だけ）
+& $vpy "$App\update.py" --record-manifest 2>$null | Out-Null
 
 # ---------------------------------------------------------
 Step "4/5  動作確認"

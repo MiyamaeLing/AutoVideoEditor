@@ -129,11 +129,23 @@ def _batch_cmd(segs: list[Seg], w: int, h: int, fps: Fraction, out: Path, enc_ar
 def render_body(segs: list[Seg], w: int, h: int, fps: Fraction, work: Path, enc_args: list[str]) -> Path:
     batches = [segs[i:i + BATCH] for i in range(0, len(segs), BATCH)]
     names = []
+    import os
+
+    import rc_ops
     for k, b in enumerate(batches, 1):
-        name = f"part_{k:04d}.mkv"
-        print(f"    本編の書き出し {k}/{len(batches)}", flush=True)
-        run(_batch_cmd(b, w, h, fps, work / name, enc_args), what=f"本編 {k}")
+        # 中身の印をファイル名に入れておき、途中で止まったあとの書き出しでは、できているパートを使い回す
+        sig = rc_ops.part_signature(_batch_cmd(b, w, h, fps, Path("part.mkv"), enc_args), [s.path for s in b])
+        name = f"part_{k:04d}_{sig}.mkv"
+        if rc_ops.part_ok(work / name, float(sum(s.frames for s in b) / fps)):
+            print(f"    本編の書き出し {k}/{len(batches)}（前回書き出した分を使います）", flush=True)
+        else:
+            print(f"    本編の書き出し {k}/{len(batches)}", flush=True)
+            tmp = work / f"tmp_{name}"
+            run(_batch_cmd(b, w, h, fps, tmp, enc_args), what=f"本編 {k}")
+            os.replace(tmp, work / name)
+            rc_ops.mark_part_done(work / name)
         names.append(name)
+    rc_ops.remove_unused_parts(work, set(names))
     (work / "parts.txt").write_text("".join(f"file '{n}'\n" for n in names), encoding="utf-8")
     run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", "parts.txt", "-c", "copy", "body.mkv"],
         cwd=work, what="本編の結合")
