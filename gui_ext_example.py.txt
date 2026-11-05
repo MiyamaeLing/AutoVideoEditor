@@ -1,0 +1,12 @@
+"""拡張機能の書き方の例（ファイル名を gui_ext_○○.py にすると読み込まれます）
+
+from PySide6.QtWidgets import QPushButton
+
+
+def register(win):
+    act = win.tools_menu.addAction("例: ログを開く")
+    act.triggered.connect(lambda: win.runner.toggle.setChecked(True))
+    b = QPushButton("例のボタン")
+    b.clicked.connect(lambda: win.runner.start("finish.py", ["--help"], "例の処理"))
+    win.review.ext_bar.insertWidget(0, b)
+"""

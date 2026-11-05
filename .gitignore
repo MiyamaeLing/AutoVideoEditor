@@ -12,3 +12,4 @@ templates/*/preview_*.png
 templates/*/bgm/**/*.mp3
 templates/*/bgm/**/*.wav
 templates/*/bgm/**/*.m4a
+tests/_fixtures/

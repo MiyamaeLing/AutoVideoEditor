@@ -963,9 +963,14 @@ class ReviewPage(QWidget):
         for b in (self.b_plan, self.b_prev, self.b_final, self.b_play, self.b_thumb, self.b_yt):
             bl.addWidget(b)
 
+        # 拡張機能（gui_ext_*.py）が「確認・仕上げ」タブにボタンを追加する場所
+        self.ext_bar = QHBoxLayout()
+        self.ext_bar.addStretch()
+
         lay = QVBoxLayout(self)
         lay.addLayout(top)
         lay.addWidget(split, 1)
+        lay.addLayout(self.ext_bar)
         lay.addLayout(bl)
         self._update_buttons()
 
@@ -1375,6 +1380,30 @@ class MainWindow(QMainWindow):
         split.setStretchFactor(0, 5)
         split.setStretchFactor(1, 1)
         self.setCentralWidget(split)
+        self.tools_menu = self.menuBar().addMenu("ツール")
+        self.help_menu = self.menuBar().addMenu("ヘルプ")
+        self.load_extensions()
+
+    def load_extensions(self):
+        """gui_ext_*.py を読み込む。各ファイルは register(win) を持ち、メニュー・タブ・ボタンを追加する。
+
+        追加先の例:
+          win.tools_menu / win.help_menu      … メニュー（QMenu）
+          win.tabs                            … タブ（QTabWidget）
+          win.review.ext_bar                  … 「確認・仕上げ」タブのボタン列（QHBoxLayout）
+          win.runner.start(script, args, title, on_done)  … 処理の実行（進み具合の表示つき）
+        1つの拡張が壊れていても、ほかは動くようにする。
+        """
+        import importlib
+        self.extensions = []
+        for f in sorted(APP_DIR.glob("gui_ext_*.py")):
+            try:
+                mod = importlib.import_module(f.stem)
+                mod.register(self)
+                self.extensions.append(f.stem)
+            except Exception as e:  # noqa: BLE001
+                (APP_DIR / "gui_error.log").write_text(traceback.format_exc(), encoding="utf-8")
+                print(f"拡張 {f.stem} を読み込めませんでした: {e}", file=sys.stderr)
 
     # 荒編集の実行（手動モードの貼り付けにも対応）
     def run_roughcut(self, out: Path, args: list[str], llm: str, then_finish: bool, template: str,
