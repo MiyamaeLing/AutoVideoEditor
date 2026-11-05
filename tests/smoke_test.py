@@ -123,14 +123,14 @@ print('gui ok')
     test_i18n.run_all(check, out, fx)
     import test_speakers   # 話者の区別（字幕の色分け）
     test_speakers.run_all(check, out, fx)
-
-    # MVモード（tests/test_mv.py）
-    import test_mv
+    import test_mv   # MVモード（ビートに合わせたカット）
     test_mv.run_all(check, out, fx)
-
-    # テンプレートの編集画面とデザイン案（tests/test_design.py）
-    import test_design
+    import test_design   # テンプレートの編集画面とデザイン案
     test_design.run_all(check, out, fx)
+    import test_graphics   # オープニング・エンディング・テロップの種類・章の進み具合
+    test_graphics.run_all(check, out, fx)
+    import test_integration   # 機能どうしの組み合わせ（統合）
+    test_integration.run_all(check, out, fx)
 
     failed = [r for r in results if not r[1]]
     print(f"\n{len(results) - len(failed)}/{len(results)} 件 成功")

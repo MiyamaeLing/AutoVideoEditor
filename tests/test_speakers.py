@@ -329,7 +329,8 @@ QMessageBox.question = staticmethod(lambda *a, **k: QMessageBox.No)
 w = gui.MainWindow(); w.resize(1300, 860); w.show()
 res["loaded"] = "gui_ext_speakers" in w.extensions
 res["button"] = getattr(w, "speaker_button", None) is not None
-res["menus_hidden"] = not w.tools_menu.menuAction().isVisible()
+# 拡張（gui_ext_*.py）が項目を足したメニューだけ出す（何もないメニューは出さない）
+res["menus_hidden"] = all(m.menuAction().isVisible() == bool(m.actions()) for m in (w.tools_menu, w.help_menu))
 out = Path(OUT)
 w.review.load(out)
 import gui_ext_speakers as G

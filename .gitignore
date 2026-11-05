@@ -19,3 +19,4 @@ tests/_fixtures/
 templates/*/_design_work/
 templates/*/template.toml.bak
 templates/*/design_preview.png
+templates/*/generated/

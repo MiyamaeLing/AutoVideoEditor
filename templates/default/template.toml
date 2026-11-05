@@ -256,3 +256,116 @@ fade_out = 1.0        # 曲の途中で終わるとき、最後をフェード�
 min_cut = 0.3         # これより短いカットは作らない（秒）
 ai_frames = 36        # AIで並べるとき、Claudeに見せる代表フレームの最大の数
 batch = 8             # 一度に書き出すカットの数（メモリが足りないときは小さく）
+
+# ===========================================================
+#  追加のテロップの種類（カード型）
+#  文字の書き方: 「／」で改行、比較表は「｜」で列を区切ります
+#  position: top-left / top-right / top / left / right / middle / bottom-left / bottom-right
+#  animation: slide（横から）/ pop（ポンッ）/ fade（ふわっ）
+#  見た目の確認:  python graphics.py --samples
+# ===========================================================
+[telop.bubble]            # 吹き出し（心の声・ひとこと）  例: 「なにこれ！？」
+size = 60
+color = "#1A1A1A"         # 文字の色
+fill = "#FFFFFF"          # 吹き出しの色
+border_color = "#1A1A1A"  # 縁の色
+border = 5
+position = "right"        # right / left / top / middle
+animation = "pop"
+
+[telop.spec]              # 商品スペックのカード  例: 「マキタ DF033D／重さ：1.2kg／価格：9,800円」
+size = 44
+head_size = 50            # 見出しの文字の大きさ
+color = "#FFFFFF"
+label_color = "#9FD3FF"   # 「重さ」などの項目名の色
+head_color = "#FFFFFF"
+head_fill = "#2B6CB0"     # 見出しの帯の色
+fill = "#101820"          # カードの色
+opacity = 0.88            # カードの濃さ（1 = 透けない）
+position = "right"
+animation = "slide"
+
+[telop.compare]           # 比較表  例: 「｜A社｜B社／重さ｜1.2kg｜1.5kg／価格｜1万円｜8千円」
+size = 44
+head_size = 46
+color = "#FFFFFF"
+label_color = "#FFE14D"   # 左の列（項目名）の色
+head_color = "#FFFFFF"
+head_fill = "#2B6CB0"
+fill = "#101820"
+stripe = "#22303F"        # 1行おきの色
+opacity = 0.9
+position = "middle"
+animation = "pop"
+
+[telop.step]              # 工作の「STEP 1」カード  例: 「STEP 2 穴をあける」（番号なしなら順に数えます）
+size = 56
+number_size = 76
+color = "#1A1A1A"
+fill = "#FFFFFF"
+accent = "#FF7A00"        # 番号の四角の色
+number_color = "#FFFFFF"
+position = "top-left"
+animation = "slide"
+
+[telop.place]             # 屋外の場所カード  例: 「高尾山 山頂／標高599m」
+size = 58
+sub_size = 36             # 2行目（補足）の大きさ
+color = "#FFFFFF"
+sub_color = "#CFE8D8"
+accent = "#2FA36B"        # 左の線とピンの色
+fill = "#101820"
+opacity = 0.85
+position = "bottom-left"
+margin_bottom = 210       # 画面の下からの距離（字幕と重ならないように）
+animation = "slide"
+
+# ---- 章の進み具合（画面の上の細いバーと、今の章の名前） ----
+[progress]
+enabled = false           # true にすると表示します
+position = "top"          # top / bottom
+height = 8                # バーの太さ
+gap = 6                   # 章と章のすき間
+color = "#FFE14D"         # 進んだ部分の色
+track_color = "#FFFFFF"   # まだの部分の色
+track_opacity = 0.35
+show_title = true         # 今の章の名前を出す
+title_size = 30
+title_color = "#FFFFFF"
+title_box = "#000000"
+title_opacity = 0.55
+title_format = "{title}"  # 例: "{n}/{total} {title}"（{n}=何章目 / {total}=章の数）
+title_seconds = 0         # 0 = 章の間ずっと出す / 5 = 章の頭の5秒だけ出す
+title_align = "left"      # 章の名前を出す側（left / right）
+
+# ---- オープニングの自動生成（python graphics.py で作れます） ----
+[opening]
+enabled = false           # true にすると、[intro] の file が空のとき、自動で作ったオープニングを使います
+duration = 3.0            # 秒
+logo = ""                 # 空なら [logo] の画像を使います（背景透過PNGがおすすめ）
+channel_name = ""         # 例: "〇〇チャンネル"
+tagline = ""              # 下に小さく出す一言（空なら出さない）
+background = "#101820"
+background_image = ""     # 背景に使う画像（空なら background の色）
+accent_color = "#FFE14D"
+color = "#FFFFFF"
+size = 110
+tagline_size = 44
+sound = ""                # ジングル（効果音）のファイル。空なら無音
+
+# ---- エンディングの自動生成（YouTube の終了画面用） ----
+[ending]
+enabled = false           # true にすると、[outro] の file が空のとき、自動で作ったエンディングを使います
+duration = 20             # 秒（YouTube の終了画面は最後の5〜20秒）
+message = "チャンネル登録よろしくお願いします！"
+sub_message = "ほかの動画もぜひ見てください"
+channel_name = ""
+video_boxes = 2           # 動画の枠の数（0〜2）。YouTube Studio でこの枠に動画を置きます
+background = "#101820"
+background_image = ""
+accent_color = "#FFE14D"
+color = "#FFFFFF"
+size = 76
+sub_size = 40
+music = ""                # エンディングの曲（空なら無音）
+music_volume_db = -12

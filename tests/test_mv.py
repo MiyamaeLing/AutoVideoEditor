@@ -377,7 +377,8 @@ app = QApplication([])
 w = gui.MainWindow(); w.resize(1200, 900); w.show()
 res = {"ext": "gui_ext_mv" in w.extensions, "has_tab": hasattr(w, "mv_tab")}
 res["tab_names"] = [w.tabs.tabText(i) for i in range(w.tabs.count())]
-res["menus_hidden"] = not w.tools_menu.menuAction().isVisible()
+# 拡張（gui_ext_*.py）が項目を足したメニューだけ出す（何もないメニューは出さない）
+res["menus_hidden"] = all(m.menuAction().isVisible() == bool(m.actions()) for m in (w.tools_menu, w.help_menu))
 t = w.mv_tab
 calls = []
 def fake_start(script, args, title, on_done=None, handle_error=None):

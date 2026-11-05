@@ -237,6 +237,9 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
 
     intro_p = tpl.path(tpl.get("intro", {}).get("file", ""))
     outro_p = tpl.path(tpl.get("outro", {}).get("file", ""))
+    if not preview:   # [opening] / [ending] が有効なら、テンプレートから自動で作ったものを使う
+        import rc_graphics
+        intro_p, outro_p = rc_graphics.auto_intro_outro(tpl, intro_p, outro_p)
     intro = clip_seg(intro_p, fps) if intro_p and not preview else None
     outro = clip_seg(outro_p, fps) if outro_p and not preview else None
     off = float(intro.frames / fps) if intro else 0.0
@@ -301,7 +304,8 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
     # 話者の区別（実験的な機能）：speakers.json があれば、字幕を人ごとの色にする
     import rc_speakers
     caps_ass = rc_speakers.decorate_captions(out_dir, tpl, items, max_chars, off, inside) or caps
-    ass = build_ass(tpl, w, h, caps_ass, telops, chapters)
+    progress = ([(c["t"] + off, c["title"]) for c in sess_chapters], off, off + body_dur)   # 章の進み具合
+    ass = build_ass(tpl, w, h, caps_ass, telops, chapters, progress)
     if ftl is not tl:   # 早送り中は画面の隅に「×4」などを出す
         ass = rc_speedup.add_badges(ass, tpl, w, h, ftl.badge_ranges(), off, body_dur)
     (work / "subs.ass").write_text(ass, encoding="utf-8")

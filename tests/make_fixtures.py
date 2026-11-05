@@ -58,6 +58,9 @@ def find_jp_font() -> Path:
 def make(force: bool = False) -> Path:
     # 文字起こしのキャッシュはフォルダの場所を含むので、別の場所からコピーした古い素材は作り直す
     stamp = f"ok {FX.resolve()}"
+    # 見た目テンプレート（template.toml）が変わったら、テスト用のコピー（tpl/）も作り直す
+    import hashlib
+    stamp += " " + hashlib.sha1((ROOT / "templates" / "default" / "template.toml").read_bytes()).hexdigest()[:12]
     if (FX / "done").exists() and not force and (FX / "done").read_text(encoding="utf-8") == stamp:
         return FX
     if FX.exists():

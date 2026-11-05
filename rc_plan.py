@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 import rc_llm
+from rc_graphics import CARD_STYLES
 from rc_template import MOODS, SE_KINDS
 from rc_transcribe import fmt_ts
 
@@ -31,7 +32,7 @@ PLAN_SCHEMA = {
                     "start_id": {"type": "integer"},
                     "end_id": {"type": "integer"},
                     "text": {"type": "string"},
-                    "style": {"type": "string", "enum": ["emphasis", "info", "warning", "funny"]},
+                    "style": {"type": "string", "enum": ["emphasis", "info", "warning", "funny", *CARD_STYLES]},
                     "se": {"type": "string", "enum": ["none"] + SE_KINDS},
                 },
             },
@@ -70,6 +71,14 @@ def _instructions(mode: str, available_moods: list[str]) -> str:
 - telops: 強調テロップ。start_id〜end_id の発言の間、画面に出ます
   - text は**15字以内**の短い言葉（発言そのままではなく要点。例: 「重さ わずか1.2kg！」「ここ注意」）
   - style: emphasis=大事なポイント / info=補足情報（商品名・数値・場所など）/ warning=注意 / funny=ツッコミ・面白い所
+  - カード型の style（text の書き方が決まっています。「／」で改行。ここだけは15字を超えてよい）:
+    - bubble=吹き出し（心の声・ひとこと。例: 「なにこれ！？」）
+    - spec=商品スペックのカード（1行目が見出し、2行目から「項目：値」。例: 「マキタ DF033D／重さ：1.2kg／価格：9,800円」）。
+      発言に出てきた数値だけを使う
+    - compare=比較表（「／」で行、「｜」で列。1行目が見出し。例: 「｜A社｜B社／重さ｜1.2kg｜1.5kg」）。2つ以上を比べている所だけ
+    - step=工作の工程のカード（例: 「STEP 2 穴をあける」。工程の始まりに。番号を省くと順に数えます）
+    - place=屋外の場所カード（例: 「高尾山 山頂／標高599m」。場所が変わった所に）
+    - 解説・レビューでは spec / compare、工作では step、屋外では place を中心に。カード型は1本に数個まで
   - se: テロップと同時に鳴らす効果音（pop=ポンッ / ding=チーン / whoosh=シュッ / boing=ボヨン / none）。鳴らしすぎない
   - 多すぎると見づらいので、本当に効く所だけ
 - zooms: 映像をグッと寄せる発言のID。強調したい一言・結論・オチに。連続させない
