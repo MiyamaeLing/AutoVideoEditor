@@ -113,13 +113,22 @@ def _load_partial(path: Path, keys: set[str]) -> dict[str, dict]:
         with open(path, "w", encoding="utf-8") as fp:
             for k, st in state.items():
                 fp.write(json.dumps({"fkey": k, "from": 0.0, "to": st["until"], "done": st["done"],
-                                     "segments": st["segments"]}, ensure_ascii=False) + "\n")
+                                     "segments": st["segments"]}, ensure_ascii=False, default=_plain) + "\n")
     return state
+
+
+def _plain(o):
+    """numpy の数・真偽値（np.bool_ / np.float32 など）を、JSON に書ける普通の値にする"""
+    if hasattr(o, "item"):
+        return o.item()
+    if hasattr(o, "tolist"):
+        return o.tolist()
+    raise TypeError(f"Object of type {o.__class__.__name__} is not JSON serializable")
 
 
 def _append_partial(path: Path, rec: dict) -> None:
     with open(path, "a", encoding="utf-8") as fp:
-        fp.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        fp.write(json.dumps(rec, ensure_ascii=False, default=_plain) + "\n")
         fp.flush()
         try:
             os.fsync(fp.fileno())
@@ -142,8 +151,8 @@ def read_audio(path: Path, start: float, dur: float):
 
 def _seg_dict(s, off: float) -> dict:
     return {
-        "start": round(s.start + off, 3), "end": round(s.end + off, 3), "text": s.text.strip(),
-        "words": [{"start": round(w.start + off, 3), "end": round(w.end + off, 3), "word": w.word}
+        "start": round(float(s.start) + off, 3), "end": round(float(s.end) + off, 3), "text": s.text.strip(),
+        "words": [{"start": round(float(w.start) + off, 3), "end": round(float(w.end) + off, 3), "word": w.word}
                   for w in (s.words or [])],
     }
 
@@ -203,7 +212,7 @@ def transcribe(sources: SourceSet, cache_path: Path, model_name: str, device: st
             if f.duration - pos < 0.5:   # 最後の発言が終わりぎりぎりまであった
                 _append_partial(ppath, {"fkey": fk, "from": pos, "to": pos, "done": True, "segments": []})
                 break
-            last = pos + WINDOW_SEC >= f.duration - 1.0
+            last = bool(pos + WINDOW_SEC >= f.duration - 1.0)
             end = f.duration if last else pos + WINDOW_SEC
             audio = read_audio(f.path, pos, (f.duration - pos + 1.0) if last else (WINDOW_SEC + OVERLAP_SEC))
             if pipe is not None:
@@ -214,7 +223,7 @@ def transcribe(sources: SourceSet, cache_path: Path, model_name: str, device: st
             for s in segs:
                 if not last and s.start + pos >= end:
                     break   # ここから先は次の区切りで（続きを読まないので、その分の時間もかからない）
-                nxt = max(nxt, s.end + pos)
+                nxt = max(nxt, float(s.end) + pos)
                 # 無音部分で出やすい「幻聴」（ありもしない文が出る）を除外
                 if s.no_speech_prob > 0.6 and s.avg_logprob < -1.0:
                     continue
@@ -229,12 +238,12 @@ def transcribe(sources: SourceSet, cache_path: Path, model_name: str, device: st
                 nxt = max(nxt, f.duration)
             local.extend(new)
             _append_partial(ppath, {"fkey": fk, "from": pos, "to": round(nxt, 3), "done": last, "segments": new})
-            pos = round(nxt, 3)
+            pos = round(float(nxt), 3)
             if last:
                 break
         all_segs.extend(_shift(local, off))
     print(f"  文字起こし完了: {len(all_segs)}セグメント, {time.time()-t0:.0f}秒")
-    cache_path.write_text(json.dumps({"key": key, "segments": all_segs}, ensure_ascii=False, indent=1), encoding="utf-8")
+    cache_path.write_text(json.dumps({"key": key, "segments": all_segs}, ensure_ascii=False, indent=1, default=_plain), encoding="utf-8")
     ppath.unlink(missing_ok=True)
     return all_segs
 

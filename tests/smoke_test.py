@@ -145,6 +145,8 @@ print('gui ok')
     test_review_fixes.run_all(check, out, fx)
     import test_claude_code   # サブスク（Claude Code）での連携と「AIへの指示」
     test_claude_code.run_all(check, out, fx)
+    import test_transcribe_numpy   # 文字起こしの途中保存（numpy の値）
+    test_transcribe_numpy.run_all(check, out, fx)
 
     failed = [r for r in results if not r[1]]
     print(f"\n{len(results) - len(failed)}/{len(results)} 件 成功")
