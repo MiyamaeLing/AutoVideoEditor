@@ -27,6 +27,7 @@ if sys.platform == "win32":
         pass
 
 import rc_win  # noqa: F401
+import rc_broll
 import rc_chapters
 import rc_llm
 import rc_multicam
@@ -177,6 +178,8 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
         return None
     else:
         plan = rc_plan.default_plan(items, moods)
+    if not plan_file:   # 素材フォルダ（broll）があれば、差し込む場所も決める
+        rc_broll.auto_place(out_dir, sess, tpl, items, plan, llm, effort, usage)
     speedups = rc_speedup.sanitize(plan, works, by_id, sp_cfg)
     plan = rc_plan.sanitize(plan, set(span), moods)
     for k in ("speedups", "speedups_auto"):   # 早送りは rc_speedup.sanitize の結果だけを使う
@@ -189,6 +192,13 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
     if edited.exists() and not (plan_file and Path(plan_file).resolve() == edited.resolve()):
         edited.unlink()   # 新しいプランを使うので、前のプランへの手直し（画面の表）は使わない
     (out_dir / "plan_used.json").write_text(json.dumps(plan, ensure_ascii=False, indent=1), encoding="utf-8")
+    if plan.get("broll"):
+        try:
+            xml = rc_broll.write_xml(out_dir, sess, plan, tpl)
+            if xml:
+                print(f"  Premiere用XML（Bロール入り）: {xml}")
+        except (Exception, SystemExit) as e:  # noqa: BLE001  XMLの失敗で書き出しを止めない
+            print(f"  [注意] Bロール入りのXMLを作れませんでした: {e}")
     if plan_only:
         print(f"■ 演出プランを作りました: {out_dir / 'plan_used.json'}")
         if usage["in"]:
@@ -213,6 +223,7 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
         items, span = rc_speedup.retime_items(chunks, cut, corr, ftl, span)
     segs = ftl.segs if ftl is not tl else split_by_zoom(tl, zooms)
     segs = rc_multicam.apply_segs(segs, src, fps, mc, w, h)   # 手元カメラの区間は映像を2台目に差し替える
+    segs = rc_broll.attach_to_segs(segs, plan.get("broll", []), span, tpl, fps, w, h, out_dir)
     body_frames = sum(s.frames for s in segs)
     if preview:
         keep_frames, out = round(preview * fps), []

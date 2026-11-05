@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import dataclasses
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
@@ -34,6 +35,14 @@ class Seg:
     video: Path | None = None   # 映像だけ別のファイル（2台目カメラ）から使うとき。音声は path のまま
     video_start: float = 0.0    # video のファイル内の開始秒
     fit: str = "pad"            # 縦横比が違うとき: pad=黒で埋める / blur=ぼかした背景で埋める
+    broll: object = None   # 重ねる差し込み素材（rc_broll.Overlay）。無ければ None
+
+
+def sub_seg(s: Seg, k0: int, k1: int, fps: Fraction) -> Seg:
+    """区切り s の、出力のフレーム k0〜k1 の部分。早送りの倍率と2台目カメラの開始位置も合わせてずらす"""
+    dt = float(Fraction(k0) / fps) * float(s.speed)
+    return dataclasses.replace(s, start=s.start + dt, frames=k1 - k0,
+                               video_start=s.video_start + dt if s.video is not None else s.video_start)
 
 
 def run(cmd: list[str], cwd: Path | None = None, what: str = "") -> subprocess.CompletedProcess:
@@ -147,18 +156,27 @@ def _batch_cmd(segs: list[Seg], w: int, h: int, fps: Fraction, out: Path, enc_ar
             vi = ai + 1
         ins.append((ai, vi))
     parts, labels = [], ""
+    extra = []   # Bロール（差し込み素材）の入力。本編の入力の後ろに足す
     for i, s in enumerate(segs):
         d = float(s.frames / fps)
         ai, vi = ins[i]
+        vl = f"v{i}" if s.broll is None else f"m{i}"
         fx = s.fx.chain(f"{out.stem}_{i:02d}.trf") if s.fx else ""   # 色・手ブレ補正（rc_enhance）
         fast = f"setpts=(PTS-STARTPTS)/{s.speed:g}," if s.speed != 1 else ""
         tail = (f"setsar=1,fps={fps},format=yuv420p,"
-                f"tpad=stop_mode=clone:stop_duration=1,trim=end_frame={s.frames},setpts=PTS-STARTPTS[v{i}]")
+                f"tpad=stop_mode=clone:stop_duration=1,trim=end_frame={s.frames},setpts=PTS-STARTPTS[{vl}]")
         if s.fit == "blur":
             parts.append(_blur_fill(f"[{vi}:v]{fast}{_pre_chain(s, w, h)},{fx}", w, h, i) + tail)
         else:
             parts.append(f"[{vi}:v]{fast}{_pre_chain(s, w, h)},{fx}"
                          f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,{tail}")
+        if s.broll is not None:
+            import rc_broll
+            n_in = ins[-1][1] + 1   # 本編（と2台目）の入力の数。Bロールの入力はその後ろ
+            inp, filt = rc_broll.seg_filter(s.broll, n_in + len(extra), f"[{vl}]", f"[v{i}]", fps,
+                                            s.frames, f"br{i}")
+            extra.append(inp)
+            parts.append(filt)
         if s.has_audio:
             parts.append(f"[{ai}:a]{_tempo(s.speed, s.gain_db)}aresample={SR},"
                          f"aformat=sample_fmts=fltp:channel_layouts=stereo,"
@@ -167,6 +185,8 @@ def _batch_cmd(segs: list[Seg], w: int, h: int, fps: Fraction, out: Path, enc_ar
             parts.append(f"anullsrc=r={SR}:cl=stereo,atrim=end={d:.4f}[a{i}]")
         labels += f"[v{i}][a{i}]"
     parts.append(f"{labels}concat=n={len(segs)}:v=1:a=1[v][a]")
+    for inp in extra:
+        cmd += inp
     return cmd + ["-filter_complex", ";".join(parts), "-map", "[v]", "-map", "[a]",
                   *enc_args, "-c:a", "pcm_s16le", str(out)]
 

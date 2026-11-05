@@ -123,4 +123,7 @@ def sanitize(plan: dict, valid_ids: set[int], moods: list[str]) -> dict:
             out["bgm"].append(b)
     # ほかの機能が足した項目（2台目カメラの "angles" など）は、そのまま引き継ぐ
     out.update({k: v for k, v in plan.items() if k not in out and k != "_off"})
+    if "broll" in plan:   # Bロール（差し込み素材。rc_broll.py）
+        import rc_broll
+        out["broll"] = rc_broll.sanitize(plan["broll"], valid_ids)
     return out
