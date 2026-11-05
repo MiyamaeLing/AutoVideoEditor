@@ -15,3 +15,7 @@ templates/*/bgm/**/*.m4a
 tests/_fixtures/
 .claude/
 *_mv/
+# テンプレートの編集画面の作業ファイル
+templates/*/_design_work/
+templates/*/template.toml.bak
+templates/*/design_preview.png
