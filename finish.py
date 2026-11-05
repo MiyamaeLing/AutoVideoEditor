@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import itertools
 import json
 import os
@@ -26,6 +27,7 @@ if sys.platform == "win32":
         pass
 
 import rc_win  # noqa: F401
+import rc_broll
 import rc_chapters
 import rc_llm
 import rc_plan
@@ -165,11 +167,20 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
         return None
     else:
         plan = rc_plan.default_plan(items, moods)
+    if not plan_file:   # 素材フォルダ（broll）があれば、差し込む場所も決める
+        rc_broll.auto_place(out_dir, sess, tpl, items, plan, llm, effort, usage)
     plan = rc_plan.sanitize(plan, set(span), moods)
     edited = out_dir / "plan_edited.json"
     if edited.exists() and not (plan_file and Path(plan_file).resolve() == edited.resolve()):
         edited.unlink()   # 新しいプランを使うので、前のプランへの手直し（画面の表）は使わない
     (out_dir / "plan_used.json").write_text(json.dumps(plan, ensure_ascii=False, indent=1), encoding="utf-8")
+    if plan.get("broll"):
+        try:
+            xml = rc_broll.write_xml(out_dir, sess, plan, tpl)
+            if xml:
+                print(f"  Premiere用XML（Bロール入り）: {xml}")
+        except (Exception, SystemExit) as e:  # noqa: BLE001  XMLの失敗で書き出しを止めない
+            print(f"  [注意] Bロール入りのXMLを作れませんでした: {e}")
     if plan_only:
         print(f"■ 演出プランを作りました: {out_dir / 'plan_used.json'}")
         if usage["in"]:
@@ -186,13 +197,14 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
         c = by_id[z["id"]]
         zooms.append((c.start - 0.1, c.end + 0.3, float(zcfg.get(z["strength"], 1.15))))
     segs = split_by_zoom(tl, zooms)
+    segs = rc_broll.attach_to_segs(segs, plan.get("broll", []), span, tpl, fps, w, h, out_dir)
     body_frames = sum(s.frames for s in segs)
     if preview:
         keep_frames, out = round(preview * fps), []
         for s in segs:
             if keep_frames <= 0:
                 break
-            out.append(rc_render.Seg(s.path, s.start, min(s.frames, keep_frames), s.zoom))
+            out.append(dataclasses.replace(s, frames=min(s.frames, keep_frames)))
             keep_frames -= out[-1].frames
         segs, body_frames = out, sum(s.frames for s in out)
     body_dur = float(body_frames / fps)

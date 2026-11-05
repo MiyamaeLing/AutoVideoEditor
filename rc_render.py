@@ -28,6 +28,7 @@ class Seg:
     frames: int      # 出力フレーム数
     zoom: float = 1.0
     has_audio: bool = True
+    broll: object = None   # 重ねる差し込み素材（rc_broll.Overlay）。無ければ None
 
 
 def run(cmd: list[str], cwd: Path | None = None, what: str = "") -> subprocess.CompletedProcess:
@@ -107,14 +108,22 @@ def _batch_cmd(segs: list[Seg], w: int, h: int, fps: Fraction, out: Path, enc_ar
         dur = s.frames / fps + Fraction(1, 10)
         cmd += ["-ss", f"{s.start:.4f}", "-t", f"{float(dur):.4f}", "-i", str(s.path)]
     parts, labels = [], ""
+    extra = []   # Bロール（差し込み素材）の入力。本編の入力の後ろに足す
     for i, s in enumerate(segs):
         d = float(s.frames / fps)
         zoom = f"crop=iw/{s.zoom:.3f}:ih/{s.zoom:.3f}," if s.zoom > 1.001 else ""
+        vl = f"v{i}" if s.broll is None else f"m{i}"
         parts.append(
             f"[{i}:v]{zoom}scale={w}:{h}:force_original_aspect_ratio=decrease,"
             f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps={fps},format=yuv420p,"
-            f"tpad=stop_mode=clone:stop_duration=1,trim=end_frame={s.frames},setpts=PTS-STARTPTS[v{i}]"
+            f"tpad=stop_mode=clone:stop_duration=1,trim=end_frame={s.frames},setpts=PTS-STARTPTS[{vl}]"
         )
+        if s.broll is not None:
+            import rc_broll
+            inp, filt = rc_broll.seg_filter(s.broll, len(segs) + len(extra), f"[{vl}]", f"[v{i}]", fps,
+                                            s.frames, f"br{i}")
+            extra.append(inp)
+            parts.append(filt)
         if s.has_audio:
             parts.append(f"[{i}:a]aresample={SR},aformat=sample_fmts=fltp:channel_layouts=stereo,"
                          f"apad=whole_dur={d:.4f},atrim=end={d:.4f},asetpts=PTS-STARTPTS[a{i}]")
@@ -122,6 +131,8 @@ def _batch_cmd(segs: list[Seg], w: int, h: int, fps: Fraction, out: Path, enc_ar
             parts.append(f"anullsrc=r={SR}:cl=stereo,atrim=end={d:.4f}[a{i}]")
         labels += f"[v{i}][a{i}]"
     parts.append(f"{labels}concat=n={len(segs)}:v=1:a=1[v][a]")
+    for inp in extra:
+        cmd += inp
     return cmd + ["-filter_complex", ";".join(parts), "-map", "[v]", "-map", "[a]",
                   *enc_args, "-c:a", "pcm_s16le", str(out)]
 

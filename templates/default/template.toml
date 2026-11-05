@@ -118,3 +118,17 @@ outline_color = "#111111"   # 文字の縁取り（内側）
 outer_color = "#FFFFFF"     # 文字の縁取り（外側）
 accent_color = "#2B6CB0"    # 帯の色（「上に帯」のデザイン）
 layouts = ["bottom", "band", "side"]   # bottom=下に大きな文字 / band=上に帯 / side=横に文字
+
+# ---- Bロール（差し込み素材。発言に合わせて画像・動画を出す） ----
+[broll]
+folder = "broll"            # 本編の動画と同じ場所にある、この名前のフォルダの画像・動画を使う
+auto = true                 # 演出プランを作るとき、素材フォルダがあれば出す場所も自動で決める
+min_sec = 2.5               # 1つの素材を出す長さ（秒）の目安
+max_sec = 7.0
+fade = 0.25                 # 出し入れのフェード（秒）
+kenburns = 1.12             # 写真をゆっくり寄せる（引く）倍率。1.0 にすると動かさない
+wipe_width = 640            # ワイプ（画面の隅に小さく出す）の幅（px）
+wipe_position = "top-right" # top-left / top-right / bottom-left / bottom-right
+wipe_margin = 40            # 画面の端からの間隔（px）
+wipe_border = 6             # ワイプのふちの太さ（px。0 でふちなし）
+wipe_border_color = "#FFFFFF"

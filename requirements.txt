@@ -8,3 +8,5 @@ google-auth-oauthlib
 # GPU (CUDA) で文字起こしするためのNVIDIAライブラリ（Windows / Linux）
 nvidia-cublas-cu12
 nvidia-cudnn-cu12==9.*
+# Bロール（差し込み素材）に iPhone の写真（HEIC）を使うため
+pillow-heif

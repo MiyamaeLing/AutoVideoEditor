@@ -121,4 +121,7 @@ def sanitize(plan: dict, valid_ids: set[int], moods: list[str]) -> dict:
             if b.get("mood") not in moods:
                 b["mood"] = "none" if b.get("mood") == "none" or not moods else moods[0]
             out["bgm"].append(b)
+    if "broll" in plan:   # Bロール（差し込み素材。rc_broll.py）
+        import rc_broll
+        out["broll"] = rc_broll.sanitize(plan["broll"], valid_ids)
     return out
