@@ -118,3 +118,13 @@ outline_color = "#111111"   # 文字の縁取り（内側）
 outer_color = "#FFFFFF"     # 文字の縁取り（外側）
 accent_color = "#2B6CB0"    # 帯の色（「上に帯」のデザイン）
 layouts = ["bottom", "band", "side"]   # bottom=下に大きな文字 / band=上に帯 / side=横に文字
+
+# ---- 字幕の翻訳（translate.py / 「英語字幕を作る」 / YouTube の英語字幕・英語タイトル） ----
+[translate]
+languages = ["en"]        # 作る言語（YouTubeの言語コード）。例: ["en", "ko", "zh-Hans", "es"]
+
+[translate.en]            # 英語の字幕の読みやすさ（ほかの言語も [translate.ko] のように書けば変えられます）
+max_line = 42             # 1行の最大文字数
+lines = 2                 # 1枚の最大行数
+reading_speed = 17        # 1秒に読める文字数の目安。訳が長くて読み切れないときは、次の字幕の直前まで表示を延ばす
+max_extend = 1.5          # 日本語の字幕より、最大で何秒長く表示してよいか
