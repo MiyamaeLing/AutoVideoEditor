@@ -50,7 +50,9 @@ def build_ass(tpl: Template, w: int, h: int, captions, telops, chapters) -> str:
     for name in ("emphasis", "info", "warning", "funny"):
         c = tel.get(name, {})
         box = "box_color" in c
-        styles.append(_style(f"T_{name}", c, POS.get(c.get("position", "top"), 8), 70, 70, box=box))
+        # margin_v / margin_h はテンプレートに書いたときだけ使う（書いていなければ今までどおり 70）
+        styles.append(_style(f"T_{name}", c, POS.get(c.get("position", "top"), 8), c.get("margin_v", 70),
+                             c.get("margin_h", 70), box=box))
     styles.append(_style("Chapter", chap, 5, 0, box=True))
 
     ev = []
