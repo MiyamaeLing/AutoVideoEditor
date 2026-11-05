@@ -124,6 +124,10 @@ print('gui ok')
     import test_speakers   # 話者の区別（字幕の色分け）
     test_speakers.run_all(check, out, fx)
 
+    # MVモード（tests/test_mv.py）
+    import test_mv
+    test_mv.run_all(check, out, fx)
+
     failed = [r for r in results if not r[1]]
     print(f"\n{len(results) - len(failed)}/{len(results)} 件 成功")
     sys.exit(1 if failed else 0)
