@@ -120,7 +120,7 @@ def candidate_times(sess: dict, tl: Timeline, chunks: dict, decisions: dict, pla
     return out
 
 
-def extract_candidates(src: SourceSet, times, work: Path) -> list[dict]:
+def extract_candidates(src: SourceSet, times, work: Path, key=None) -> list[dict]:
     work.mkdir(parents=True, exist_ok=True)
     cands = []
     for i, (t, why) in enumerate(times, 1):
@@ -134,8 +134,9 @@ def extract_candidates(src: SourceSet, times, work: Path) -> list[dict]:
             if _grab(src.files[fi].path, local, f):
                 img = Image.open(f).convert("RGB")
                 sc = sharpness(img)
-                if best is None or sc > best[0]:
-                    best = (sc, img)
+                k = key(img, sc) if key else sc   # key: 目が開いている顔を優先する（rc_thumbspro）
+                if best is None or k > best[2]:
+                    best = (sc, img, k)
         if best:
             path = work / f"cand_{i:02d}.jpg"
             best[1].save(path, quality=92)
@@ -159,7 +160,8 @@ def pick_with_ai(cands, title: str, text_ideas: list[str], mode: str, effort: st
         im = Image.open(c["path"]).resize((512, 288))
         buf = io.BytesIO()
         im.save(buf, "JPEG", quality=80)
-        content.append({"type": "text", "text": f"候補{c['no']}（{c['why']}）"})
+        note = f"／{c['note']}" if c.get("note") else ""   # 顔の様子（rc_thumbspro）
+        content.append({"type": "text", "text": f"候補{c['no']}（{c['why']}{note}）"})
         content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                                     "data": base64.b64encode(buf.getvalue()).decode()}})
     content.append({"type": "text", "text": f"動画のタイトル案: {title}\n文字の案: {'、'.join(text_ideas) or '（なし）'}"})
@@ -183,7 +185,7 @@ def pick_with_ai(cands, title: str, text_ideas: list[str], mode: str, effort: st
 
 def pick_simple(cands, text_ideas: list[str], title: str):
     """AIなし：見どころ優先・くっきりした順に、離れた場面を3枚"""
-    order = sorted(cands, key=lambda c: (c["why"] == "全体から", -c["sharp"]))
+    order = sorted(cands, key=lambda c: (-c["score"],) if "score" in c else (c["why"] == "全体から", -c["sharp"]))
     texts = text_ideas or [title or "タイトル"]
     return [{"frame": c["no"], "text": texts[i % len(texts)], "reason": c["why"]} for i, c in enumerate(order[:3])]
 
@@ -308,6 +310,17 @@ def compose(frame: Image.Image, text: str, layout: str, tpl: Template, font: tup
     return img.filter(ImageFilter.UnsharpMask(radius=1.2, percent=60, threshold=2))
 
 
+def _pro(tpl: Template):
+    """顔で候補を選ぶ・人物を切り抜くための道具（rc_thumbspro）。使えない・使わない設定なら None"""
+    try:
+        import rc_thumbspro
+        d = rc_thumbspro.Designer(tpl)
+        return d if d.active else None
+    except Exception as e:  # noqa: BLE001
+        print(f"  [注意] 人物の切り抜き・顔の検出を使えませんでした: {e}")
+        return None
+
+
 def save_jpeg(img: Image.Image, path: Path):
     for q in (92, 85, 75):   # YouTubeの上限（2MB）に収める
         img.save(path, "JPEG", quality=q, optimize=True)
@@ -338,9 +351,13 @@ def generate(out_dir: Path, tpl: Template, llm: str = "api", effort: str = "medi
     work = tdir / "_candidates"
     print("■ サムネイル案")
     print("  候補の場面を取り出しています…", flush=True)
-    cands = extract_candidates(src, candidate_times(sess, tl, chunks, decisions, plan), work)
+    pro = _pro(tpl)   # 顔で選ぶ・人物の切り抜き（rc_thumbspro。使えなければ None）
+    cands = extract_candidates(src, candidate_times(sess, tl, chunks, decisions, plan), work,
+                               pro.frame_key if pro else None)
     if not cands:
         raise SystemExit("[エラー] 候補の静止画を取り出せませんでした。")
+    if pro:
+        cands = pro.annotate(cands)
 
     usage = None
     if llm == "api" and not custom_text:
@@ -360,16 +377,21 @@ def generate(out_dir: Path, tpl: Template, llm: str = "api", effort: str = "medi
 
     font = find_font(tpl)
     layouts = tpl.get("thumbnail", {}).get("layouts", ["bottom", "band", "side"])
-    for old in tdir.glob("thumb_*.jpg"):
+    for old in [*tdir.glob("thumb_*.jpg"), *tdir.glob("cutout_*.png")]:
         old.unlink()
     by_no = {c["no"]: c for c in cands}
     outs, info = [], []
     for i, p in enumerate(picks, 1):
         frame = Image.open(by_no[p["frame"]]["path"])
+        # 人物の切り抜きデザイン（thumb_i_person.jpg）。frame は「背景だけぼかす」設定のときに差し替わる
+        pouts, frame = pro.make(frame, p["text"], i, font, tdir, by_no[p["frame"]]) if pro else ([], frame)
         for lay in layouts:
+            if lay == "person":
+                continue
             path = tdir / f"thumb_{i}_{lay}.jpg"
             save_jpeg(compose(frame, p["text"], lay, tpl, font), path)
             outs.append(path)
+        outs += pouts
         info.append({"image": i, "text": p["text"], "reason": p.get("reason", ""),
                      "source_time": round(by_no[p["frame"]]["t"], 2)})
     (tdir / "thumbnails.json").write_text(json.dumps(info, ensure_ascii=False, indent=1), encoding="utf-8")

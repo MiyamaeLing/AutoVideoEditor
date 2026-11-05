@@ -8,3 +8,5 @@ google-auth-oauthlib
 # GPU (CUDA) で文字起こしするためのNVIDIAライブラリ（Windows / Linux）
 nvidia-cublas-cu12
 nvidia-cudnn-cu12==9.*
+# サムネイルの顔の検出・人物の切り抜き（画面なし版のOpenCV。軽く、GPU不要）
+opencv-python-headless>=4.8
