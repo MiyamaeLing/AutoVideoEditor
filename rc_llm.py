@@ -81,7 +81,7 @@ META_SCHEMA = {
 def _cut_instructions(mode: str, glossary: list[str]) -> str:
     g = f"\n固有名詞・専門用語（字幕の誤り訂正に使ってください）: {'、'.join(glossary)}" if glossary else ""
     return f"""あなたはYouTube動画の編集アシスタントです。撮影素材の文字起こしを読んで、荒編集でカットすべき部分を判定してください。
-{MODE_HINT[mode]}{g}
+{MODE_HINT[mode]}{g}{channel_notes("cut", mode)}
 
 ## 入力の形式
 各行が1つの「チャンク」（短い発話のかたまり）です:
@@ -98,6 +98,15 @@ def _cut_instructions(mode: str, glossary: list[str]) -> str:
 - 「(参考)」の付いた行は前後関係の参考用です。判定には含めないでください
 
 出力はJSONのみです。"""
+
+
+def channel_notes(kind: str, mode: str) -> str:
+    """公開した動画の分析（channel_insights.json）から分かった傾向。なければ空（今までどおり）"""
+    try:
+        import rc_analytics
+        return rc_analytics.prompt_notes(kind, mode)
+    except Exception:  # noqa: BLE001  分析の情報が読めなくても、編集は止めない
+        return ""
 
 
 def chunk_lines(chunks: list[Chunk], ref_ids: set[int] = frozenset()) -> str:

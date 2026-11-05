@@ -16,7 +16,9 @@ import sys
 from pathlib import Path
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload",
-          "https://www.googleapis.com/auth/youtube.force-ssl"]
+          "https://www.googleapis.com/auth/youtube.force-ssl",
+          # 公開後の分析（視聴維持率）用。前からの連携には入っていないので、分析タブで連携し直してもらう
+          "https://www.googleapis.com/auth/yt-analytics.readonly"]
 CATEGORIES = {"28": "科学と技術", "26": "ハウツーとスタイル", "22": "ブログ", "19": "旅行とイベント",
               "24": "エンターテイメント", "27": "教育", "10": "音楽", "2": "自動車と乗り物"}
 MODE_CATEGORY = {"talk": "28", "craft": "26", "outdoor": "19"}
