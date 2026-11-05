@@ -121,4 +121,6 @@ def sanitize(plan: dict, valid_ids: set[int], moods: list[str]) -> dict:
             if b.get("mood") not in moods:
                 b["mood"] = "none" if b.get("mood") == "none" or not moods else moods[0]
             out["bgm"].append(b)
+    # ほかの機能が足した項目（2台目カメラの "angles" など）は、そのまま引き継ぐ
+    out.update({k: v for k, v in plan.items() if k not in out and k != "_off"})
     return out

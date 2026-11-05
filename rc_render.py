@@ -28,6 +28,9 @@ class Seg:
     frames: int      # 出力フレーム数
     zoom: float = 1.0
     has_audio: bool = True
+    video: Path | None = None   # 映像だけ別のファイル（2台目カメラ）から使うとき。音声は path のまま
+    video_start: float = 0.0    # video のファイル内の開始秒
+    fit: str = "pad"            # 縦横比が違うとき: pad=黒で埋める / blur=ぼかした背景で埋める
 
 
 def run(cmd: list[str], cwd: Path | None = None, what: str = "") -> subprocess.CompletedProcess:
@@ -101,22 +104,41 @@ def pick_encoder(pref: str, quality: int) -> tuple[list[str], list[str], str]:
 
 # ---------- 1. 本編 ----------
 
+def _blur_fill(src: str, w: int, h: int, i: int) -> str:
+    """縦横比が違う映像（縦長のスマホなど）を、同じ映像をぼかして広げた背景の上に置く（最後に , が付く）"""
+    bw, bh = max(2, w // 8 // 2 * 2), max(2, h // 8 // 2 * 2)   # 小さくしてからぼかすと速い
+    return (f"{src}split=2[mf{i}][mb{i}];"
+            f"[mb{i}]scale={bw}:{bh}:force_original_aspect_ratio=increase,crop={bw}:{bh},boxblur=6:2,"
+            f"colorchannelmixer=rr=0.75:gg=0.75:bb=0.75,scale={w}:{h},setsar=1[mg{i}];"
+            f"[mf{i}]scale={w}:{h}:force_original_aspect_ratio=decrease,setsar=1[mc{i}];"
+            f"[mg{i}][mc{i}]overlay=(W-w)/2:(H-h)/2,")
+
+
 def _batch_cmd(segs: list[Seg], w: int, h: int, fps: Fraction, out: Path, enc_args: list[str]) -> list[str]:
     cmd = ["ffmpeg", "-y", "-v", "error"]
+    ins = []   # 各素材の (音声の入力番号, 映像の入力番号)
     for s in segs:
         dur = s.frames / fps + Fraction(1, 10)
         cmd += ["-ss", f"{s.start:.4f}", "-t", f"{float(dur):.4f}", "-i", str(s.path)]
+        ai = vi = (ins[-1][1] + 1) if ins else 0
+        if s.video is not None:
+            cmd += ["-ss", f"{s.video_start:.4f}", "-t", f"{float(dur):.4f}", "-i", str(s.video)]
+            vi = ai + 1
+        ins.append((ai, vi))
     parts, labels = [], ""
     for i, s in enumerate(segs):
         d = float(s.frames / fps)
+        ai, vi = ins[i]
         zoom = f"crop=iw/{s.zoom:.3f}:ih/{s.zoom:.3f}," if s.zoom > 1.001 else ""
-        parts.append(
-            f"[{i}:v]{zoom}scale={w}:{h}:force_original_aspect_ratio=decrease,"
-            f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps={fps},format=yuv420p,"
-            f"tpad=stop_mode=clone:stop_duration=1,trim=end_frame={s.frames},setpts=PTS-STARTPTS[v{i}]"
-        )
+        tail = (f"setsar=1,fps={fps},format=yuv420p,"
+                f"tpad=stop_mode=clone:stop_duration=1,trim=end_frame={s.frames},setpts=PTS-STARTPTS[v{i}]")
+        if s.fit == "blur":
+            parts.append(_blur_fill(f"[{vi}:v]{zoom}", w, h, i) + tail)
+        else:
+            parts.append(f"[{vi}:v]{zoom}scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                         f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,{tail}")
         if s.has_audio:
-            parts.append(f"[{i}:a]aresample={SR},aformat=sample_fmts=fltp:channel_layouts=stereo,"
+            parts.append(f"[{ai}:a]aresample={SR},aformat=sample_fmts=fltp:channel_layouts=stereo,"
                          f"apad=whole_dur={d:.4f},atrim=end={d:.4f},asetpts=PTS-STARTPTS[a{i}]")
         else:
             parts.append(f"anullsrc=r={SR}:cl=stereo,atrim=end={d:.4f}[a{i}]")

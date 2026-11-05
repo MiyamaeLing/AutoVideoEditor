@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import itertools
 import json
 import os
@@ -28,6 +29,7 @@ if sys.platform == "win32":
 import rc_win  # noqa: F401
 import rc_chapters
 import rc_llm
+import rc_multicam
 import rc_plan
 import rc_render
 from rc_ass import build_ass
@@ -166,6 +168,8 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
     else:
         plan = rc_plan.default_plan(items, moods)
     plan = rc_plan.sanitize(plan, set(span), moods)
+    # 2台目カメラがあれば、手元カメラを使う場面（plan["angles"]）を用意する（無ければ None）
+    mc = rc_multicam.prepare(out_dir, sess, tl, chunks, plan, tpl, llm, effort, usage)
     edited = out_dir / "plan_edited.json"
     if edited.exists() and not (plan_file and Path(plan_file).resolve() == edited.resolve()):
         edited.unlink()   # 新しいプランを使うので、前のプランへの手直し（画面の表）は使わない
@@ -186,13 +190,14 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
         c = by_id[z["id"]]
         zooms.append((c.start - 0.1, c.end + 0.3, float(zcfg.get(z["strength"], 1.15))))
     segs = split_by_zoom(tl, zooms)
+    segs = rc_multicam.apply_segs(segs, src, fps, mc, w, h)   # 手元カメラの区間は映像を2台目に差し替える
     body_frames = sum(s.frames for s in segs)
     if preview:
         keep_frames, out = round(preview * fps), []
         for s in segs:
             if keep_frames <= 0:
                 break
-            out.append(rc_render.Seg(s.path, s.start, min(s.frames, keep_frames), s.zoom))
+            out.append(dataclasses.replace(s, frames=min(s.frames, keep_frames)))
             keep_frames -= out[-1].frames
         segs, body_frames = out, sum(s.frames for s in out)
     body_dur = float(body_frames / fps)
