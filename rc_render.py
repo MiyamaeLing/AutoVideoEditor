@@ -28,6 +28,7 @@ class Seg:
     frames: int      # 出力フレーム数
     zoom: float = 1.0
     has_audio: bool = True
+    fx: object = None   # 映像の補正（rc_enhance.VideoFx）。None なら何もしない
 
 
 def run(cmd: list[str], cwd: Path | None = None, what: str = "") -> subprocess.CompletedProcess:
@@ -101,6 +102,11 @@ def pick_encoder(pref: str, quality: int) -> tuple[list[str], list[str], str]:
 
 # ---------- 1. 本編 ----------
 
+def _pre_chain(s: Seg, w: int, h: int) -> str:
+    zoom = f"crop=iw/{s.zoom:.3f}:ih/{s.zoom:.3f}," if s.zoom > 1.001 else ""
+    return f"{zoom}scale={w}:{h}:force_original_aspect_ratio=decrease"
+
+
 def _batch_cmd(segs: list[Seg], w: int, h: int, fps: Fraction, out: Path, enc_args: list[str]) -> list[str]:
     cmd = ["ffmpeg", "-y", "-v", "error"]
     for s in segs:
@@ -109,9 +115,9 @@ def _batch_cmd(segs: list[Seg], w: int, h: int, fps: Fraction, out: Path, enc_ar
     parts, labels = [], ""
     for i, s in enumerate(segs):
         d = float(s.frames / fps)
-        zoom = f"crop=iw/{s.zoom:.3f}:ih/{s.zoom:.3f}," if s.zoom > 1.001 else ""
+        fx = s.fx.chain(f"{out.stem}_{i:02d}.trf") if s.fx else ""   # 色・手ブレ補正（rc_enhance）
         parts.append(
-            f"[{i}:v]{zoom}scale={w}:{h}:force_original_aspect_ratio=decrease,"
+            f"[{i}:v]{_pre_chain(s, w, h)},{fx}"
             f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps={fps},format=yuv420p,"
             f"tpad=stop_mode=clone:stop_duration=1,trim=end_frame={s.frames},setpts=PTS-STARTPTS[v{i}]"
         )
@@ -129,10 +135,18 @@ def _batch_cmd(segs: list[Seg], w: int, h: int, fps: Fraction, out: Path, enc_ar
 def render_body(segs: list[Seg], w: int, h: int, fps: Fraction, work: Path, enc_args: list[str]) -> Path:
     batches = [segs[i:i + BATCH] for i in range(0, len(segs), BATCH)]
     names = []
+    fx = None
+    if any(s.fx for s in segs):
+        import rc_enhance   # 手ブレの解析は、1つ前のまとまりの書き出しと同時に裏で進める
+        fx = rc_enhance.StabPipeline(batches, w, h, fps, work, lambda s: _pre_chain(s, w, h))
     for k, b in enumerate(batches, 1):
         name = f"part_{k:04d}.mkv"
         print(f"    本編の書き出し {k}/{len(batches)}", flush=True)
-        run(_batch_cmd(b, w, h, fps, work / name, enc_args), what=f"本編 {k}")
+        if fx:
+            fx.wait(k)
+        # 補正のファイル（.cube / .trf）はフィルターに相対パスで書くので、作業フォルダで実行する
+        run(_batch_cmd(b, w, h, fps, (work / name).resolve(), enc_args), cwd=work if fx else None,
+            what=f"本編 {k}")
         names.append(name)
     (work / "parts.txt").write_text("".join(f"file '{n}'\n" for n in names), encoding="utf-8")
     run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", "parts.txt", "-c", "copy", "body.mkv"],
@@ -142,11 +156,18 @@ def render_body(segs: list[Seg], w: int, h: int, fps: Fraction, work: Path, enc_
 
 # ---------- 2. 音声 ----------
 
-def mix_audio(body: Path, total: float, bgm_sections, se_events, tpl: Template, work: Path) -> dict:
-    """bgm_sections: [(開始, 終了, ファイル)] / se_events: [(時刻, ファイル)]。 mix.wav を作り、音量の測定値を返す。"""
+def mix_audio(body: Path, total: float, bgm_sections, se_events, tpl: Template, work: Path,
+              voice_fx=None) -> dict:
+    """bgm_sections: [(開始, 終了, ファイル)] / se_events: [(時刻, ファイル)]。 mix.wav を作り、音量の測定値を返す。
+
+    voice_fx: 声のトラックの処理（rc_enhance.VoiceFx）。None なら何もしない
+    """
     a = tpl.get("audio", {})
     cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(body)]
     parts = [f"[0:a]volume={a.get('voice_volume_db', 0)}dB,asplit=2[voice][key]"]
+    if voice_fx:   # 声を聞き取りやすくする処理（BGMを下げる合図にも、処理した後の声を使う）
+        parts = voice_fx.graph(f"[0:a]volume={a.get('voice_volume_db', 0)}dB", "[vclean]") + \
+            ["[vclean]asplit=2[voice][key]"]
     idx = 1
     bgm_labels = []
     for s, e, f in bgm_sections:

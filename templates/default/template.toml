@@ -118,3 +118,30 @@ outline_color = "#111111"   # 文字の縁取り（内側）
 outer_color = "#FFFFFF"     # 文字の縁取り（外側）
 accent_color = "#2B6CB0"    # 帯の色（「上に帯」のデザイン）
 layouts = ["bottom", "band", "side"]   # bottom=下に大きな文字 / band=上に帯 / side=横に文字
+
+# ---- 声を聞き取りやすくする（仕上げの書き出しで、声のトラックにかける） ----
+[audio_clean]
+enabled = true        # false にすると、声の処理をしません
+strength = 1.0        # 全体の強さ（0.5=控えめ / 1.0=ふつう / 1.5=強め）
+lowcut_hz = 0         # 低音カットの周波数。0 = 撮影ジャンルに合わせる（解説・工作 80Hz / 屋外 120Hz）
+denoise = 1.0         # ノイズ除去（「サー」「ゴー」を減らす）の強さ。0 で使わない
+deesser = 1.0         # 歯擦音（サ行の「シー」の刺さり）を抑える強さ。0 で使わない
+compressor = 1.0      # 声の大きさのばらつきをならす強さ。0 で使わない
+wind = "auto"         # 風切り音対策。"auto" = 屋外企画だけ / true / false
+
+# ---- 映像の明るさ・色（仕上げの書き出しで、本編の映像にかける） ----
+[color]
+auto = false          # true にすると、明るさと色かぶりを自動で少し整えます
+strength = 0.5        # 自動補正の強さ（0〜1。控えめが 0.5）
+lut = ""              # LUT ファイル（.cube）。例: "luts/channel.cube"（このフォルダからの相対パス）
+lut_strength = 1.0    # LUT のかかり具合（0〜1）
+brightness = 0.0      # 明るさ（-0.5〜0.5。0 = そのまま）
+contrast = 1.0        # コントラスト（1.0 = そのまま）
+saturation = 1.0      # 鮮やかさ（1.0 = そのまま）
+temperature = 0.0     # 色温度（+ で暖かく、- で涼しく。-1〜1）
+
+# ---- 手ブレ補正（仕上げの書き出しで、本編の映像にかける） ----
+[stabilize]
+enabled = "auto"      # "auto" = 屋外企画だけ使う / true / false
+strength = 0.5        # なめらかさ（0.1〜1。大きいほどゆったり動く。少し拡大されます）
+method = "auto"       # auto（vidstab。無ければ deshake）/ vidstab / deshake

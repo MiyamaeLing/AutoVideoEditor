@@ -30,6 +30,7 @@ import rc_chapters
 import rc_llm
 import rc_plan
 import rc_render
+import rc_enhance
 from rc_ass import build_ass
 from rc_export import build_captions, write_srt
 from rc_media import SourceSet, probe, require_ffmpeg, snap_fps
@@ -120,7 +121,8 @@ def clip_seg(path: Path, fps: Fraction) -> rc_render.Seg:
 
 def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan_file: Path | None = None,
         effort: str = "medium", preview: float | None = None, keep_work: bool = False,
-        plan_only: bool = False, thumbs: bool = True) -> Path | None:
+        plan_only: bool = False, thumbs: bool = True, fx: dict | None = None) -> Path | None:
+    """fx: 声と映像の補正の切り替え {"audio_clean"/"color"/"stabilize": True/False}（無ければテンプレート通り）"""
     require_ffmpeg()
     t0 = time.time()
     out_dir = Path(out_dir).resolve()   # FFmpeg は作業フォルダで動かすので、相対パスのままだと迷子になる
@@ -249,9 +251,17 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
                                                          int(tpl["video"].get("quality", 19)))
     print(f"  エンコーダ: {enc} / {w}x{h} {float(fps):.3f}fps / 完成の長さ {fmt_ts(total)}"
           + (f"（プレビュー {preview:.0f}秒）" if preview else ""))
+    # 声と映像の補正（rc_enhance）。オープニング・エンディングにはかけない
+    enh = rc_enhance.resolve(tpl, sess.get("mode", "talk"), fx)
+    for n in enh.notes:
+        print(f"  [注意] {n}")
+    print(f"  補正: {enh.describe()}", flush=True)
+    rc_enhance.apply_video(enh, segs, work, fps)
     body = rc_render.render_body(all_segs, w, h, fps, work, inter_args)
     print("    音声のミックス（BGM・効果音・音量の調整）", flush=True)
-    loud = rc_render.mix_audio(body, total, sections, se_events, tpl, work)
+    loud = rc_render.mix_audio(body, total, sections, se_events, tpl, work,
+                               voice_fx=rc_enhance.voice_fx(enh, off, off + body_dur, total,
+                                                            [(f.path, 0.0, f.duration) for f in src.files]))
     (work / "subs.ass").write_text(build_ass(tpl, w, h, caps, telops, chapters), encoding="utf-8")
     logo = tpl.path(tpl.get("logo", {}).get("file", ""))
     stem = sess["stem"]
@@ -308,6 +318,8 @@ def template_preview(template: Path, sample: Path | None) -> None:
         segs = [rc_render.Seg(work / "bg.mp4", 0.0, 8 * 30, 1.0, False)]
     _, inter, _ = rc_render.pick_encoder("auto", 19)
     final, _, _ = rc_render.pick_encoder(tpl["video"].get("encoder", "auto"), 19)
+    # テンプレートの色の設定（LUT など）も見本に反映する（手ブレ補正は見本ではしない）
+    rc_enhance.apply_video(rc_enhance.resolve(tpl, "talk", {"stabilize": False}), segs, work, fps)
     body = rc_render.render_body(segs, w, h, fps, work, inter)
     caps = [(0.3, 2.8, "これは字幕のサンプルです"), (3.0, 5.4, "ここが一番大事なポイントです"),
             (5.6, 7.9, "最後まで見てくれてありがとう")]
@@ -340,14 +352,20 @@ def main():
     ap.add_argument("--no-thumbs", action="store_true", help="書き出しのあとにサムネイル案を作らない")
     ap.add_argument("--template-preview", action="store_true", help="テンプレートの見た目だけを確認する")
     ap.add_argument("--sample", type=Path, help="--template-preview の背景に使う動画")
+    for opt, what in (("--audio-clean", "声を聞き取りやすくする処理"), ("--color", "明るさ・色の補正"),
+                      ("--stabilize", "手ブレ補正")):
+        ap.add_argument(opt, choices=["auto", "on", "off"], default="auto",
+                        help=f"{what}（auto=テンプレートと撮影ジャンルに合わせる）")
     args = ap.parse_args()
     if args.template_preview:
         template_preview(args.template, args.sample)
         return
     if not args.out_dir:
         ap.error("roughcut.py の出力フォルダを指定してください")
+    fx = {k: v == "on" for k, v in (("audio_clean", args.audio_clean), ("color", args.color),
+                                     ("stabilize", args.stabilize)) if v != "auto"}
     run(args.out_dir, args.template, args.llm, args.plan, args.effort, args.preview, args.keep_work, args.plan_only,
-        not args.no_thumbs)
+        not args.no_thumbs, fx)
 
 
 if __name__ == "__main__":
