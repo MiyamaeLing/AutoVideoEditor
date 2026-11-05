@@ -71,7 +71,7 @@ def build_description(desc: str, chapters: list[dict], tags: list[str]) -> str:
 
 CHAPTER_HEAD = "▼ チャプター"
 # 画面やファイルで人が直す欄（完成動画を作り直しても引き継ぐ）
-USER_FIELDS = ("title", "tags", "category_id", "privacy", "upload_captions", "thumbnail")
+USER_FIELDS = ("title", "tags", "category_id", "privacy", "upload_captions", "thumbnail", "localize")
 
 
 def source_stamp(out_dir: Path) -> str:
@@ -277,12 +277,17 @@ def apply_meta(yt, video_id: str, meta: dict, log=print) -> None:
     errs = check_meta(meta)
     if errs:
         raise SystemExit("[エラー] " + " / ".join(errs))
-    log("  タイトル・概要欄・タグを設定しています…")
-    yt.videos().update(part="snippet", body={
+    body = {
         "id": video_id,
         "snippet": {"title": meta["title"], "description": meta["description"], "tags": meta["tags"],
                     "categoryId": meta["category_id"], "defaultLanguage": "ja", "defaultAudioLanguage": "ja"},
-    }).execute()
+    }
+    part = "snippet"
+    if meta.get("localize"):   # 英語など、翻訳したタイトル・概要欄も一緒に設定する（rc_i18n.py）
+        import rc_i18n
+        part = rc_i18n.add_localizations(yt, video_id, meta, body, log)
+    log("  タイトル・概要欄・タグを設定しています…")
+    yt.videos().update(part=part, body=body).execute()
     th = meta.get("thumbnail")
     if th and Path(th).exists():
         log("  サムネイルを設定しています…")
@@ -296,6 +301,9 @@ def apply_meta(yt, video_id: str, meta: dict, log=print) -> None:
         yt.captions().insert(part="snippet", body={
             "snippet": {"videoId": video_id, "language": "ja", "name": "日本語", "isDraft": False}},
             media_body=MediaFileUpload(cap, mimetype="application/octet-stream")).execute()
+    if meta.get("localize"):
+        import rc_i18n
+        rc_i18n.upload_captions(yt, video_id, meta, log)
     log(f"  完了: https://studio.youtube.com/video/{video_id}/edit")
 
 

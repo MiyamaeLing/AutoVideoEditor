@@ -800,6 +800,9 @@ class YouTubeDialog(QDialog):
         self.caps = QCheckBox("字幕ファイル（SRT）も追加する（字幕は動画に焼き込み済みなので、通常は不要）")
         self.caps.setChecked(bool(self.meta.get("upload_captions")))
         form.addRow("", self.caps)
+        self.loc = QCheckBox("英語字幕・英語タイトルも設定する（Claudeで翻訳します。訳は保存され、2回目からは変わった所だけ訳します）")
+        self.loc.setChecked(bool(self.meta.get("localize")))
+        form.addRow("", self.loc)
         self.vid = QLineEdit(self.meta.get("video_id", ""))
         self.vid.setPlaceholderText("空なら、ファイル名と同じタイトルの動画を自動で探します（例: dQw4w9WgXcQ）")
         self.vid.setToolTip("YouTube Studio の動画の URL「studio.youtube.com/video/○○○/edit」の○○○の部分です")
@@ -887,7 +890,8 @@ class YouTubeDialog(QDialog):
         m = dict(self.meta)
         m.update(title=self.title.currentText().strip(), description=self.desc.toPlainText(), tags=self._tags(),
                  category_id=self.cat.currentData(), thumbnail=self.thumb.currentData() or "",
-                 upload_captions=self.caps.isChecked(), video_id=self.vid.text().strip())
+                 upload_captions=self.caps.isChecked(), video_id=self.vid.text().strip(),
+                 localize=self.loc.isChecked())
         return m
 
     def _set_fields(self, m: dict):
@@ -900,6 +904,19 @@ class YouTubeDialog(QDialog):
         self.cat.setCurrentIndex(max(0, self.cat.findData(m["category_id"])))
         self.thumb.setCurrentIndex(max(0, self.thumb.findData(m.get("thumbnail", ""))))
         self.caps.setChecked(bool(m.get("upload_captions")))
+        self.loc.setChecked(bool(m.get("localize")))
+
+    def _run_yt(self, args: list[str], title: str, done, handle_error=None):
+        """youtube.py を実行する。「英語字幕・英語タイトルも設定する」のときは、先に translate.py で翻訳する"""
+        if not self.loc.isChecked():
+            return self.page.win.runner.start("youtube.py", args, title, done, handle_error=handle_error)
+        args = args + ["--localize"]
+
+        def translated(ok):
+            if ok:
+                self.page.win.runner.start("youtube.py", args, title, done, handle_error=handle_error)
+        self.page.win.runner.start("translate.py", [str(self.out), "--template", self.page._template()],
+                                   "英語字幕・英語タイトルを翻訳中", translated)
 
     def _reset(self):
         if QMessageBox.question(self, "AIの案に戻す", "タイトル・概要欄・タグなど、画面で直した内容を捨てて、"
@@ -956,7 +973,7 @@ class YouTubeDialog(QDialog):
         args = [str(self.out), "--apply"]
         if self.vid.text().strip():
             args += ["--video-id", self.vid.text().strip()]
-        self.page.win.runner.start("youtube.py", args, "YouTubeの動画に設定を反映中", done, handle_error=not_found)
+        self._run_yt(args, "YouTubeの動画に設定を反映中", done, handle_error=not_found)
 
     def _choose_video(self, uploads: list[dict]):
         if not uploads:
@@ -989,7 +1006,7 @@ class YouTubeDialog(QDialog):
                 vid = self.Y.default_meta(self.out).get("video_id", "")
                 self.meta["video_id"] = vid
                 self.vid.setText(vid)
-        self.page.win.runner.start("youtube.py", [str(self.out), "--upload"], "YouTubeにアップロード中", done)
+        self._run_yt([str(self.out), "--upload"], "YouTubeにアップロード中", done)
 
     def done(self, r):
         if self.out:

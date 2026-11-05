@@ -5,6 +5,7 @@
   python youtube.py "D:\\撮影\\レビュー_roughcut" --upload            # 動画ファイルごとアップロード（審査済み向け）
   python youtube.py --login                                         # Googleアカウントと連携だけする
   python youtube.py "D:\\撮影\\レビュー_roughcut" --show              # 設定される内容を表示するだけ
+  python youtube.py "D:\\撮影\\レビュー_roughcut" --apply --localize  # 英語の字幕・タイトル・概要欄も設定
 """
 from __future__ import annotations
 
@@ -34,6 +35,8 @@ def main():
     g.add_argument("--list", action="store_true", help="最近アップロードした動画を表示する")
     g.add_argument("--show", action="store_true", help="設定される内容を表示する")
     ap.add_argument("--video-id", help="設定する動画のID（省略すると、ファイル名と同じタイトルの動画を探す）")
+    ap.add_argument("--localize", action="store_true",
+                    help="英語など翻訳した字幕・タイトル・概要欄も設定する（先に translate.py で翻訳）")
     args = ap.parse_args()
 
     if args.login or args.list:
@@ -48,6 +51,8 @@ def main():
         ap.error("roughcut.py の出力フォルダ（session.json があるフォルダ）を指定してください")
 
     meta = yt_mod.default_meta(args.out_dir)
+    if args.localize:
+        meta["localize"] = True
     if args.show or not (args.apply or args.upload):
         print(json.dumps({k: v for k, v in meta.items() if k != "title_candidates"}, ensure_ascii=False, indent=1))
         errs = yt_mod.check_meta(meta)
