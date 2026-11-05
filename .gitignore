@@ -20,3 +20,8 @@ templates/*/_design_work/
 templates/*/template.toml.bak
 templates/*/design_preview.png
 templates/*/generated/
+# 最新版への更新（update.py）が作るもの
+.installed_version.json
+.installed_manifest.json
+_update_backup/
+_update_tmp/

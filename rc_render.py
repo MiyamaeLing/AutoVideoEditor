@@ -118,7 +118,9 @@ def pick_encoder(pref: str, quality: int) -> tuple[list[str], list[str], str]:
 
 def _pre_chain(s: Seg, w: int, h: int) -> str:
     zoom = f"crop=iw/{s.zoom:.3f}:ih/{s.zoom:.3f}," if s.zoom > 1.001 else ""
-    return f"{zoom}scale={w}:{h}:force_original_aspect_ratio=decrease"
+    # 手ブレ補正（vidstab）は縦横が偶数の画素でないと動かない（縦長の2台目などで奇数になることがある）
+    even = ":force_divisible_by=2" if s.fx and getattr(s.fx, "stab", "") else ""
+    return f"{zoom}scale={w}:{h}:force_original_aspect_ratio=decrease{even}"
 
 
 def _tempo(speed: float, gain_db: float = 0.0) -> str:
@@ -144,7 +146,9 @@ def _blur_fill(src: str, w: int, h: int, i: int) -> str:
             f"[mg{i}][mc{i}]overlay=(W-w)/2:(H-h)/2,")
 
 
-def _batch_cmd(segs: list[Seg], w: int, h: int, fps: Fraction, out: Path, enc_args: list[str]) -> list[str]:
+def _batch_cmd(segs: list[Seg], w: int, h: int, fps: Fraction, out: Path, enc_args: list[str],
+               tag: str | None = None) -> list[str]:
+    """tag: 手ブレの解析ファイル（.trf）の名前の頭。省略すると出力ファイルの名前"""
     cmd = ["ffmpeg", "-y", "-v", "error"]
     ins = []   # 各素材の (音声の入力番号, 映像の入力番号)
     for s in segs:
@@ -161,7 +165,7 @@ def _batch_cmd(segs: list[Seg], w: int, h: int, fps: Fraction, out: Path, enc_ar
         d = float(s.frames / fps)
         ai, vi = ins[i]
         vl = f"v{i}" if s.broll is None else f"m{i}"
-        fx = s.fx.chain(f"{out.stem}_{i:02d}.trf") if s.fx else ""   # 色・手ブレ補正（rc_enhance）
+        fx = s.fx.chain(f"{tag or out.stem}_{i:02d}.trf") if s.fx else ""   # 色・手ブレ補正（rc_enhance）
         fast = f"setpts=(PTS-STARTPTS)/{s.speed:g}," if s.speed != 1 else ""
         tail = (f"setsar=1,fps={fps},format=yuv420p,"
                 f"tpad=stop_mode=clone:stop_duration=1,trim=end_frame={s.frames},setpts=PTS-STARTPTS[{vl}]")
@@ -191,22 +195,54 @@ def _batch_cmd(segs: list[Seg], w: int, h: int, fps: Fraction, out: Path, enc_ar
                   *enc_args, "-c:a", "pcm_s16le", str(out)]
 
 
+def _part_key(b: list[Seg], w: int, h: int, fps: Fraction, tag: str, enc_args: list[str], work: Path):
+    """本編パーツの中身を決めるもの: FFmpeg の指示と、読むファイル（本編・2台目・Bロール）。
+    色の補正（.cube）は毎回作り直すので、更新日時ではなく中身で比べる"""
+    import hashlib
+    cmd = _batch_cmd(b, w, h, fps, Path(tag + ".mkv"), enc_args, tag=tag)
+    paths = []
+    for s in b:
+        paths.append(s.path)
+        if s.video is not None:
+            paths.append(s.video)
+        if s.broll is not None and getattr(s.broll, "src", None):
+            paths.append(s.broll.src)
+        cube = getattr(s.fx, "cube", "") if s.fx else ""
+        if cube and (Path(work) / cube).is_file():
+            cmd.append(hashlib.sha1((Path(work) / cube).read_bytes()).hexdigest())
+    return cmd, paths
+
+
 def render_body(segs: list[Seg], w: int, h: int, fps: Fraction, work: Path, enc_args: list[str]) -> Path:
     batches = [segs[i:i + BATCH] for i in range(0, len(segs), BATCH)]
     names = []
+    import os
+
+    import rc_ops
     fx = None
     if any(s.fx for s in segs):
         import rc_enhance   # 手ブレの解析は、1つ前のまとまりの書き出しと同時に裏で進める
         fx = rc_enhance.StabPipeline(batches, w, h, fps, work, lambda s: _pre_chain(s, w, h))
     for k, b in enumerate(batches, 1):
-        name = f"part_{k:04d}.mkv"
-        print(f"    本編の書き出し {k}/{len(batches)}", flush=True)
-        if fx:
-            fx.wait(k)
-        # 補正のファイル（.cube / .trf）はフィルターに相対パスで書くので、作業フォルダで実行する
-        run(_batch_cmd(b, w, h, fps, (work / name).resolve(), enc_args), cwd=work if fx else None,
-            what=f"本編 {k}")
+        tag = f"part_{k:04d}"   # 手ブレの解析ファイル（.trf）の名前にも使う（StabPipeline と同じ名前）
+        # 中身の印をファイル名に入れておき、途中で止まったあとの書き出しでは、できているパートを使い回す
+        cmd, paths = _part_key(b, w, h, fps, tag, enc_args, work)
+        name = f"{tag}_{rc_ops.part_signature(cmd, paths)}.mkv"
+        if rc_ops.part_ok(work / name, float(sum(s.frames for s in b) / fps)):
+            print(f"    本編の書き出し {k}/{len(batches)}（前回書き出した分を使います）", flush=True)
+            if fx:
+                fx.skip(k)
+        else:
+            print(f"    本編の書き出し {k}/{len(batches)}", flush=True)
+            if fx:
+                fx.wait(k)
+            tmp = (work / f"tmp_{name}").resolve()
+            # 補正のファイル（.cube / .trf）はフィルターに相対パスで書くので、作業フォルダで実行する
+            run(_batch_cmd(b, w, h, fps, tmp, enc_args, tag=tag), cwd=work if fx else None, what=f"本編 {k}")
+            os.replace(tmp, work / name)
+            rc_ops.mark_part_done(work / name)
         names.append(name)
+    rc_ops.remove_unused_parts(work, set(names))
     (work / "parts.txt").write_text("".join(f"file '{n}'\n" for n in names), encoding="utf-8")
     run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", "parts.txt", "-c", "copy", "body.mkv"],
         cwd=work, what="本編の結合")

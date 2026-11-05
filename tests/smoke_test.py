@@ -137,6 +137,9 @@ print('gui ok')
     # タイムライン表示と画面のデザイン（tests/test_timeline.py）
     import test_timeline
     test_timeline.run_all(check, out, fx)
+    # 途中からの再開・まとめて処理・困ったときの情報・自動更新
+    import test_ops
+    test_ops.run_all(check, out, fx)
 
     failed = [r for r in results if not r[1]]
     print(f"\n{len(results) - len(failed)}/{len(results)} 件 成功")

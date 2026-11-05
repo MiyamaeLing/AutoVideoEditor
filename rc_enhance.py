@@ -599,6 +599,17 @@ class StabPipeline:
             err.close()
         self._start(k + 1)
 
+    def skip(self, k: int) -> None:
+        """まとまり k は前回書き出したパーツを使い回す（rc_ops）ので、解析しない（動いていれば止める）"""
+        self.cmds.pop(k, None)
+        item = self.procs.pop(k, None)
+        if item:
+            p, err = item
+            if p.poll() is None:
+                p.kill()
+                p.wait()
+            err.close()
+
     def stop(self) -> None:
         for p, err in self.procs.values():
             if p.poll() is None:

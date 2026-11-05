@@ -48,6 +48,11 @@ def _gray(path: Path, t: float, w: int = 192, h: int = 108, crop: str = ""):
     return np.frombuffer(r.stdout, np.uint8).astype(np.float32)
 
 
+def _has_filter(name: str) -> bool:
+    out = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True).stdout
+    return f" {name} " in out
+
+
 # ---------------------------------------------------------------- 単体
 def t_units(check):
     import rc_broll
@@ -132,17 +137,20 @@ def t_render_graph(check, fx: Path):
     main = probe(fx / "C0001.MP4")
     fps = Fraction(30)
     rc_enhance.write_cube(work / "warm.cube", rc_enhance.identity_grid() * np.array([1.0, 0.95, 0.85]), "warm")
-    Image.new("RGB", (800, 450), (40, 90, 200)).save(work / "写真 1.jpg")
+    Image.new("RGB", (800, 450), (40, 90, 200)).save(work.parent / "写真 1.jpg")   # 作業フォルダの外
     vfx = rc_enhance.VideoFx(cube="warm.cube", stab="deshake", strength=0.5, fps=30.0)
-    ov = rc_broll.Overlay(src=(work / "写真 1.jpg").resolve(), kind="image", mode="wipe", item_frames=30,
+    ov = rc_broll.Overlay(src=(work.parent / "写真 1.jpg").resolve(), kind="image", mode="wipe", item_frames=30,
                           tw=320, th=180, x=300, y=20, border=4)
+    # 手ブレ補正は vidstab（解析ファイル .trf を作る）を、2台目＋早送りの区切りに使う
+    vfx2 = rc_enhance.VideoFx(cube="warm.cube", stab="vidstab" if _has_filter("vidstabdetect") else "deshake",
+                              strength=0.5, fps=30.0)
     segs = [rc_render.Seg(main.path, 1.0, 30, fx=vfx),
-            rc_render.Seg(main.path, 20.0, 30, speed=4.0, video=phone, video_start=2.0, fit="blur", fx=vfx,
+            rc_render.Seg(main.path, 20.0, 30, speed=4.0, video=phone, video_start=2.0, fit="blur", fx=vfx2,
                           broll=ov),
             rc_render.Seg(main.path, 5.0, 20, zoom=1.2)]
+    enc = ["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"]
     try:
-        body = rc_render.render_body(segs, 640, 360, fps, work, ["-c:v", "libx264", "-preset", "ultrafast",
-                                                                 "-pix_fmt", "yuv420p"])
+        body = rc_render.render_body(segs, 640, 360, fps, work, enc)
         ok, detail = body.exists(), ""
     except (Exception, SystemExit) as e:  # noqa: BLE001
         ok, detail, body = False, str(e)[-400:], None
@@ -158,6 +166,23 @@ def t_render_graph(check, fx: Path):
     im = np.frombuffer(raw, np.uint8).reshape(360, 640, 3).astype(float)
     wipe = im[60:160, 360:580].mean(axis=(0, 1))
     check("組み合わせ: 2台目の区切りにもBロールが重なる", wipe[2] > wipe[0] + 60, str(wipe.round()))
+
+    # 途中からの再開（rc_ops）: 同じ内容でもう一度書き出すと、できているパーツを使い回す（補正があっても）
+    import contextlib
+    import io
+    import rc_ops
+    rc_ops.clean_work(work)
+    # finish.py と同じく、色の補正（.cube）は作業フォルダを片付けた後に作り直す（中身が同じなら使い回せる）
+    rc_enhance.write_cube(work / "warm.cube", rc_enhance.identity_grid() * np.array([1.0, 0.95, 0.85]), "warm")
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            rc_render.render_body(segs, 640, 360, fps, work, enc)
+        ok = "前回書き出した分を使います" in buf.getvalue()
+    except (Exception, SystemExit) as e:  # noqa: BLE001
+        ok = False
+        buf.write(str(e))
+    check("組み合わせ: 補正つきでも、書き出し済みのパーツを使い回す", ok, buf.getvalue()[-300:])
 
 
 # ---------------------------------------------------------------- 仕上げ（finish.py）の通し

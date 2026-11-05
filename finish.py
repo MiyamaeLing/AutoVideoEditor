@@ -100,9 +100,10 @@ def clear_work(work: Path) -> None:
     """前回の作業フォルダを消す。使用中で消せないときは、分かりやすく伝えて止める。"""
     if not work.exists():
         return
+    import rc_ops
     for _ in range(5):
         try:
-            shutil.rmtree(work)
+            rc_ops.clean_work(work)   # 書き出し済みの本編パーツは残して、続きの書き出しで使い回す
             return
         except OSError:
             time.sleep(1.0)   # 中止した直後は、FFmpeg がファイルを放すまで少しかかることがある
@@ -285,7 +286,7 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
     # ---- 書き出し ----
     work = out_dir / "work"
     clear_work(work)
-    work.mkdir()
+    work.mkdir(exist_ok=True)
     final_args, inter_args, enc = rc_render.pick_encoder(tpl["video"].get("encoder", "auto"),
                                                          int(tpl["video"].get("quality", 19)))
     print(f"  エンコーダ: {enc} / {w}x{h} {float(fps):.3f}fps / 完成の長さ {fmt_ts(total)}"

@@ -100,6 +100,9 @@ def main():
     tpath = out / "transcript.json"
     if args.retranscribe and tpath.exists():
         tpath.unlink()
+    if args.retranscribe:
+        from rc_transcribe import clear_partial
+        clear_partial(tpath)   # 途中保存も使わずに、最初からやり直す
     segments = transcribe(src, tpath, args.whisper_model, args.device, glossary, args.batch_size)
     chunks = make_chunks(segments)
     save_chunks(chunks, out / "chunks.json")
