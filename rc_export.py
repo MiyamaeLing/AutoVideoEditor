@@ -163,21 +163,88 @@ def _srt_ts(t: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
+_PUNCT = set("、。，．！？!?…‥）)」』】〉》 　")
+_PARSER = None
+
+
+def _phrases(text: str) -> list[str]:
+    """日本語を文節（単語のまとまり）に分ける。BudouX が無ければ、文字の種類の変わり目で分ける"""
+    global _PARSER
+    if _PARSER is None:
+        try:
+            import budoux
+            _PARSER = budoux.load_default_japanese_parser()
+        except Exception:  # noqa: BLE001  入っていなくても字幕は作れるようにする
+            _PARSER = False
+    if _PARSER:
+        try:
+            return [p for p in _PARSER.parse(text) if p]
+        except Exception:  # noqa: BLE001
+            pass
+    return [m.group(0) for m in re.finditer(
+        r"[一-龯々〆ヵヶ]+[ぁ-ゖー]*|[ァ-ヺー]+[ぁ-ゖ]*|[A-Za-z0-9０-９Ａ-Ｚａ-ｚ.,'&+\-]+[ぁ-ゖ]*|[ぁ-ゖー]+|.", text)]
+
+
+def _char_kind(c: str) -> str:
+    if "一" <= c <= "龯" or c in "々〆ヵヶ":
+        return "k"
+    if "ァ" <= c <= "ヺ":
+        return "K"
+    if "ぁ" <= c <= "ゖ":
+        return "h"
+    if c.isascii() and c.isalnum():
+        return "a"
+    return "o"
+
+
 def split_caption(text: str, max_chars: int) -> list[str]:
+    """字幕を max_chars 以内の枚数に分ける。単語の途中では切らず、句読点・文節の切れ目を選び、
+    なるべく同じくらいの長さにそろえる（どうしても入らない長い単語だけは、文字の種類の変わり目か途中で切る）"""
     text = text.strip().rstrip("。")
     if len(text) <= max_chars:
-        return [text]
-    parts, cur = [], ""
-    for tok in re.split(r"(?<=[、。！？!?\s])", text):
-        if cur and len(cur) + len(tok) > max_chars:
-            parts.append(cur)
-            cur = ""
-        while len(tok) > max_chars:
-            parts.append(tok[:max_chars])
-            tok = tok[max_chars:]
-        cur += tok
-    if cur:
-        parts.append(cur)
+        return [text] if text else []
+    n = len(text)
+    # 切れ目の良さ（小さいほど良い）。位置 i は text[:i] と text[i:] の間
+    pen = [100.0] * (n + 1)
+    pos = 0
+    for ph in _phrases(text):
+        pos += len(ph)
+        if 0 < pos < n:
+            pen[pos] = 1.0
+    for i in range(1, n):
+        a, b = text[i - 1], text[i]
+        if a in _PUNCT:
+            pen[i] = 0.0
+        elif pen[i] > 4 and _char_kind(a) != _char_kind(b) and "o" not in (_char_kind(a) + _char_kind(b)):
+            pen[i] = 4.0   # 文節の分け方では切れ目でないが、文字の種類が変わる所
+        if b in _PUNCT and b not in " 　":
+            pen[i] = max(pen[i], 50.0)   # 句読点を次の字幕の頭に回さない
+    pen[n] = 0.0
+    parts_min = -(-n // max_chars)
+    target = n / parts_min
+    inf = float("inf")
+    best = [inf] * (n + 1)
+    back = [0] * (n + 1)
+    best[0] = 0.0
+    for j in range(1, n + 1):
+        for i in range(max(0, j - max_chars), j):
+            if best[i] == inf:
+                continue
+            seg = j - i
+            c = best[i] + pen[j] + 3.0 + 0.08 * (seg - target) ** 2
+            if seg < 4 and j < n:
+                c += 6.0   # 短すぎる字幕は避ける
+            if c < best[j]:
+                best[j], back[j] = c, i
+    cuts, j = [], n
+    while j > 0:
+        cuts.append(j)
+        j = back[j]
+    cuts.reverse()
+    parts, prev = [], 0
+    for c in cuts:
+        parts.append(text[prev:c])
+        prev = c
     return [p.strip().rstrip("。") for p in parts if p.strip()]
 
 

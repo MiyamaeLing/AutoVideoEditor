@@ -13,3 +13,5 @@ nvidia-cudnn-cu12==9.*
 opencv-python-headless>=4.8,<5
 # Bロール（差し込み素材）に iPhone の写真（HEIC）を使うため
 pillow-heif
+# 字幕を単語の途中で切らないための、日本語の文節の区切り（Google の BudouX）
+budoux>=0.6
