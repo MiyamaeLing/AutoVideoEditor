@@ -229,7 +229,7 @@ else:
 light_cut = gui.C_CUT.name()
 w.appearance.set_mode("dark")
 pump()
-res["dark_saved"] = QSettings("ai-roughcut", "AutoVideoEditor").value("ui/theme")
+res["dark_saved"] = gui.open_settings().value("ui/theme")
 res["dark_rows"] = gui.C_CUT.name() != light_cut and rv.table.item(ids.index(3), 0).background().color().name() == gui.C_CUT.name()
 res["dark_window"] = app.palette().color(app.palette().ColorRole.Window).lightness() < 80
 res["dark_btn"] = w.appearance.theme_btn.text()
@@ -292,7 +292,7 @@ def t_gui(check, out: Path, fx: Path):
     if cfg.exists():
         shutil.rmtree(cfg)   # 初めて使う状態（案内が出る・ライト表示）から始める
     code = f"ROOT = {str(ROOT)!r}\nOUT = {str(gd)!r}\nSHOTS = {str(shots)!r}\n" + GUI_CODE
-    env = dict(os.environ, APPDATA=str(cfg), XDG_CONFIG_HOME=str(cfg), PYTHONIOENCODING="utf-8")
+    env = dict(os.environ, APPDATA=str(cfg), XDG_CONFIG_HOME=str(cfg), AVE_SETTINGS_DIR=str(cfg), PYTHONIOENCODING="utf-8")
     env.pop("ANTHROPIC_API_KEY", None)
     try:
         p = subprocess.run([PY, "-c", code], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",

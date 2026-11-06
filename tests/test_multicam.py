@@ -135,11 +135,12 @@ def t_render_cmd(check):
     cmd = rc_render._batch_cmd([a, b, c], 1920, 1080, Fraction(30), Path("o.mkv"), [])
     fc = cmd[cmd.index("-filter_complex") + 1]
     inputs = [cmd[i + 1] for i, x in enumerate(cmd) if x == "-i"]
-    ok = (inputs == ["/m/A.mp4", "/m/A.mp4", "/m/phone.mp4", "/m/B.mp4"]
+    A, PH, B = (str(Path(p)) for p in ("/m/A.mp4", "/m/phone.mp4", "/m/B.mp4"))   # Windows では「\m\A.mp4」になる
+    ok = (inputs == [A, A, PH, B]
           and "[1:a]" in fc and "[2:v]" in fc and "[1:v]" not in fc and "[2:a]" not in fc
           and "[3:v]crop=" in fc and "[3:a]" in fc and "boxblur" in fc)
     check("multicam: 書き出しは映像だけ2台目・音声は本編", ok, fc[:300] if not ok else "")
-    i = cmd.index("/m/phone.mp4")
+    i = cmd.index(PH)
     check("multicam: 2台目の読み始めの位置", cmd[i - 5:i - 3] == ["-ss", "5.0000"], str(cmd[i - 5:i]))
 
 
@@ -498,7 +499,7 @@ def t_gui(check, work: Path, fx: Path, out: Path | None):
     (nd / "plan_used.json").write_text(json.dumps(p, ensure_ascii=False), encoding="utf-8")
     png = (out or gd) / "gui_multicam.png"
     code = (f"ROOT = {str(ROOT)!r}\nOUT = {str(gd)!r}\nOUT2 = {str(nd)!r}\nPNG = {str(png)!r}\n" + GUI_CODE)
-    env = dict(os.environ, APPDATA=str(fx / "appdata"), PYTHONIOENCODING="utf-8", XDG_CONFIG_HOME=str(fx / "appdata"))
+    env = dict(os.environ, APPDATA=str(fx / "appdata"), PYTHONIOENCODING="utf-8", XDG_CONFIG_HOME=str(fx / "appdata"), AVE_SETTINGS_DIR=str(fx / "appdata"))
     env.pop("ANTHROPIC_API_KEY", None)
     try:
         p = subprocess.run([PY, "-c", code], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",

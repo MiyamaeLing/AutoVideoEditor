@@ -476,7 +476,7 @@ def t_gui(check, fx: Path, pdir: Path, work: Path, root: Path, db: Path):
     pbase = pdir.parent
     code = (f"ROOT = {str(ROOT)!r}\nPDIR = {str(pdir)!r}\nWORK = {str(work)!r}\nSEARCH_ROOT = {str(root)!r}\n"
             f"SHOTS = {str(shots)!r}\n" + GUI_CODE)
-    env = dict(os.environ, APPDATA=str(fx / "appdata_preprod"), XDG_CONFIG_HOME=str(fx / "appdata_preprod"),
+    env = dict(os.environ, APPDATA=str(fx / "appdata_preprod"), XDG_CONFIG_HOME=str(fx / "appdata_preprod"), AVE_SETTINGS_DIR=str(fx / "appdata_preprod"),
                PYTHONIOENCODING="utf-8", AVE_PROJECTS_DIR=str(pbase), AVE_SEARCH_DB=str(fx / "preprod" / "gui.sqlite"))
     env.pop("ANTHROPIC_API_KEY", None)
     try:

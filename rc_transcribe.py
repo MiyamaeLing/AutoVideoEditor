@@ -141,8 +141,11 @@ def read_audio(path: Path, start: float, dur: float):
     import subprocess
 
     import numpy as np
+    # 読み始めが映像のキーフレームに重なると、FFmpeg 9 では最初の音声が少し後ろから始まるので、空きを無音で埋めて
+    # 時刻をそろえる（rc_render._batch_cmd と同じ）
     p = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", str(path),
-                        "-vn", "-ac", "1", "-ar", str(SR), "-f", "s16le", "-"], capture_output=True)
+                        "-vn", "-af", "aresample=async=1:first_pts=0", "-ac", "1", "-ar", str(SR), "-f", "s16le", "-"],
+                       capture_output=True)
     if p.returncode != 0:
         tail = p.stderr.decode("utf-8", "replace").strip().splitlines()[-5:]
         sys.exit(f"[エラー] {path.name} の音声を読み込めませんでした:\n" + "\n".join(tail))

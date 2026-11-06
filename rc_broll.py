@@ -698,7 +698,9 @@ def seg_filter(ov: Overlay, idx: int, in_label: str, out_label: str, fps: Fracti
     if ov.fade_frames and ov.f0 + frames >= ov.item_frames:
         chain += f",fade=t=out:s={max(0, frames - ov.fade_frames)}:n={ov.fade_frames}:alpha=1"
     parts.append(chain + f"[{tag}o]")
-    parts.append(f"{in_label}[{tag}o]overlay=x={ov.x}:y={ov.y}:eof_action=pass,format=yuv420p{out_label}")
+    # 重ねる素材は本編の区切りと同じコマ数に切りそろえてあるので、両方が同時に終わる。
+    # eof_action=pass は FFmpeg 9 で書き出しが止まる（デッドロック）ことがあるので、既定の repeat にする
+    parts.append(f"{in_label}[{tag}o]overlay=x={ov.x}:y={ov.y}:eof_action=repeat,format=yuv420p{out_label}")
     return inp, ";".join(parts)
 
 

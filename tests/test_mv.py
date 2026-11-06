@@ -446,7 +446,7 @@ def t_gui(check, d: Path, fx: Path, shots: Path):
     (gd / "曲 テスト_mv" / "mv_song.json").write_text(json.dumps(an, ensure_ascii=False), encoding="utf-8")
     shot = str(shots / "gui_mv.png")
     code = (f"ROOT = {str(ROOT)!r}\nDIR = {str(d)!r}\nOUTSONG = {str(song)!r}\nSHOT = {shot!r}\n" + GUI_CODE)
-    env = dict(os.environ, PYTHONIOENCODING="utf-8", XDG_CONFIG_HOME=str(fx / "appdata_mv"), APPDATA=str(fx / "appdata_mv"))
+    env = dict(os.environ, PYTHONIOENCODING="utf-8", XDG_CONFIG_HOME=str(fx / "appdata_mv"), AVE_SETTINGS_DIR=str(fx / "appdata_mv"), APPDATA=str(fx / "appdata_mv"))
     env.pop("ANTHROPIC_API_KEY", None)
     try:
         p = subprocess.run([PY, "-c", code], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",

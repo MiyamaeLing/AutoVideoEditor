@@ -96,7 +96,7 @@ assert w.review.table.rowCount() > 0
 w.grab().save({str(out / 'gui_smoke.png')!r})
 print('gui ok')
 """
-    env = dict(os.environ, APPDATA=str(fx / "appdata"))
+    env = dict(os.environ, APPDATA=str(fx / "appdata"), AVE_SETTINGS_DIR=str(fx / "appdata"))
     env["PYTHONIOENCODING"] = "utf-8"
     try:
         p = subprocess.run([PY, "-c", code], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",

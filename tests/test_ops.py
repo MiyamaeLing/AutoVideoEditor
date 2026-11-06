@@ -34,7 +34,7 @@ PY = sys.executable
 
 def _env(fx: Path, **extra) -> dict:
     e = dict(os.environ, PYTHONIOENCODING="utf-8", APPDATA=str(fx / "ops" / "appdata"),
-             XDG_CONFIG_HOME=str(fx / "ops" / "appdata"), AVE_UPDATE_CHECK="0")
+             XDG_CONFIG_HOME=str(fx / "ops" / "appdata"), AVE_SETTINGS_DIR=str(fx / "ops" / "appdata"), AVE_UPDATE_CHECK="0")
     e.pop("ANTHROPIC_API_KEY", None)
     e.update(extra)
     return e
@@ -643,7 +643,7 @@ def t_gui(check, out: Path, fx: Path):
         shutil.rmtree(gd)
     gd.mkdir(parents=True)
     code = f"ROOT = {str(ROOT)!r}\nOUT = {str(gd)!r}\nFX = {str(fx)!r}\n" + GUI_CODE
-    env = _env(fx, APPDATA=str(gd / "appdata"), XDG_CONFIG_HOME=str(gd / "appdata"))
+    env = _env(fx, APPDATA=str(gd / "appdata"), XDG_CONFIG_HOME=str(gd / "appdata"), AVE_SETTINGS_DIR=str(gd / "appdata"))
     try:
         p = subprocess.run([PY, "-c", code], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
                            errors="replace", env=env, timeout=600)

@@ -476,6 +476,9 @@ w2.close()
 w.settings.setValue("api_key", "")
 os.environ.pop("ANTHROPIC_API_KEY", None)
 w.create.llm.setCurrentIndex(w.create.llm.findData("api", 257))
+# 開き直した画面（w2）が「AI」の欄の初期値（サブスク）を設定に書くので、w の選択（Claude API）を設定に戻す
+# （戻さないと、Claude Code が入っている PC では「サブスク」として確認を通ってしまう）
+w.create._llm_changed()
 calls.clear(); shown.clear()
 rv.make_plan()
 res["key_check"] = (not calls) and any("APIキー" in s for _, s in shown)
@@ -565,7 +568,7 @@ def t_gui(check, out: Path, fx: Path):
     shutil.copy(fx / "plan.json", gd / "plan_used.json")
     (gd / "plan_edited.json").unlink(missing_ok=True)
     code = f"ROOT = {str(ROOT)!r}\nOUT = {str(gd)!r}\n" + GUI_CODE
-    env = dict(os.environ, APPDATA=str(fx / "appdata"), PYTHONIOENCODING="utf-8", XDG_CONFIG_HOME=str(fx / "appdata"))
+    env = dict(os.environ, APPDATA=str(fx / "appdata"), PYTHONIOENCODING="utf-8", XDG_CONFIG_HOME=str(fx / "appdata"), AVE_SETTINGS_DIR=str(fx / "appdata"))
     env.pop("ANTHROPIC_API_KEY", None)
     try:
         p = subprocess.run([PY, "-c", code], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",

@@ -474,7 +474,7 @@ print("RESULT " + json.dumps(res, ensure_ascii=False))
 def t_gui(check, out: Path, base: Path):
     code = f"ROOT = {str(ROOT)!r}\nOUT = {str(out)!r}\n" + GUI_CODE
     env = dict(os.environ, APPDATA=str(base / "appdata"), PYTHONIOENCODING="utf-8",
-               XDG_CONFIG_HOME=str(base / "appdata"))
+               XDG_CONFIG_HOME=str(base / "appdata"), AVE_SETTINGS_DIR=str(base / "appdata"))
     env.pop("ANTHROPIC_API_KEY", None)
     try:
         p = subprocess.run([PY, "-c", code], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",

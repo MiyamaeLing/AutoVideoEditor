@@ -505,7 +505,7 @@ def t_gui(check, d: Path, fx: Path):
     appdata = fx / "i18n" / "appdata"
     appdata.mkdir(parents=True, exist_ok=True)
     code = f"ROOT = {str(ROOT)!r}\nOUT = {str(d)!r}\n" + GUI_CODE
-    env = dict(os.environ, APPDATA=str(appdata), PYTHONIOENCODING="utf-8", XDG_CONFIG_HOME=str(appdata))
+    env = dict(os.environ, APPDATA=str(appdata), PYTHONIOENCODING="utf-8", XDG_CONFIG_HOME=str(appdata), AVE_SETTINGS_DIR=str(appdata))
     env.pop("ANTHROPIC_API_KEY", None)
     try:
         p = subprocess.run([PY, "-c", code], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",

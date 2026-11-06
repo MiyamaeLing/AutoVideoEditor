@@ -390,7 +390,7 @@ def t_gui(check, proj: Path, fx: Path):
         check("ショート: GUI（ショートが必要）", False, "先にショートの書き出しが成功している必要があります")
         return
     code = f"ROOT = {str(ROOT)!r}\nOUT = {str(proj)!r}\nSHOTS = {str(proj)!r}\n" + GUI_CODE
-    env = dict(os.environ, APPDATA=str(fx / "appdata"), PYTHONIOENCODING="utf-8", XDG_CONFIG_HOME=str(fx / "appdata"))
+    env = dict(os.environ, APPDATA=str(fx / "appdata"), PYTHONIOENCODING="utf-8", XDG_CONFIG_HOME=str(fx / "appdata"), AVE_SETTINGS_DIR=str(fx / "appdata"))
     env.pop("ANTHROPIC_API_KEY", None)
     try:
         p = subprocess.run([PY, "-c", code], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",

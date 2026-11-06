@@ -195,7 +195,8 @@ def available_filters() -> set[str]:
                                  encoding="utf-8", errors="replace").stdout
         except FileNotFoundError:
             out = ""
-        _FILTERS = {m.group(1) for m in re.finditer(r"^\s*[TSC.]{3}\s+(\w+)\s", out, re.M)}
+        # 行の頭の印は FFmpeg 8 までは3文字（" TSC afftdn  A->A"）、9 からは2文字（" TS afftdn  A->A"）
+        _FILTERS = {m.group(1) for m in re.finditer(r"^\s*[TSC.]{2,3}\s+(\w+)\s+\S*->\S*", out, re.M)}
     return _FILTERS
 
 

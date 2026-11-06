@@ -83,6 +83,16 @@ def open_path(p: Path):
     QDesktopServices.openUrl(QUrl.fromLocalFile(str(p)))
 
 
+def open_settings() -> QSettings:
+    """画面の設定。ふだんは Windows のレジストリ（ほかの OS は設定ファイル）に保存する。
+    環境変数 AVE_SETTINGS_DIR があれば、そのフォルダの AutoVideoEditor.ini に保存する
+    （テストが本物の設定を読んだり、APIキーを書き換えたりしないように）"""
+    d = os.environ.get("AVE_SETTINGS_DIR")
+    if d:
+        return QSettings(str(Path(d) / "AutoVideoEditor.ini"), QSettings.IniFormat)
+    return QSettings("ai-roughcut", "AutoVideoEditor")
+
+
 def has_api_key(settings: QSettings) -> bool:
     """「Claude で自動」で使えるか（サブスクの Claude Code なら、キーは要らない）"""
     if use_claude_code(settings):
@@ -1872,7 +1882,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("AI動画編集ツール")
         self.resize(1200, 820)
-        self.settings = QSettings("ai-roughcut", "AutoVideoEditor")
+        self.settings = open_settings()
         self.runner = Runner(self.settings)
         self.create = CreatePage(self)
         self.review = ReviewPage(self)

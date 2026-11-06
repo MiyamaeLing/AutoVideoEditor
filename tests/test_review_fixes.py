@@ -591,7 +591,7 @@ def t_gui(check, out: Path, fx: Path):
     shot1, shot2 = base / "gui_dark_check.png", base / "gui_dark_analytics.png"
     code = (f"ROOT = {str(ROOT)!r}\nOUT_A = {str(dirs[0])!r}\nOUT_B = {str(dirs[1])!r}\n"
             f"SHOT_CHECK = {str(shot1)!r}\nSHOT_ANALYTICS = {str(shot2)!r}\n" + GUI_CODE)
-    env = dict(os.environ, APPDATA=str(fx / "appdata"), PYTHONIOENCODING="utf-8", XDG_CONFIG_HOME=str(fx / "appdata"))
+    env = dict(os.environ, APPDATA=str(fx / "appdata"), PYTHONIOENCODING="utf-8", XDG_CONFIG_HOME=str(fx / "appdata"), AVE_SETTINGS_DIR=str(fx / "appdata"))
     env.pop("ANTHROPIC_API_KEY", None)
     try:
         p = subprocess.run([PY, "-c", code], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",

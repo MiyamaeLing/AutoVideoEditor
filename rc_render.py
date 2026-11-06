@@ -183,7 +183,9 @@ def _batch_cmd(segs: list[Seg], w: int, h: int, fps: Fraction, out: Path, enc_ar
             extra.append(inp)
             parts.append(filt)
         if s.has_audio:
-            parts.append(f"[{ai}:a]{_tempo(s.speed, s.gain_db)}aresample={SR},"
+            # -ss で読み始めた所が映像のキーフレームにちょうど重なると、FFmpeg 9 では最初の音声が少し後ろ
+            # （AAC の1かたまり＝最大 21ms）から始まる。asetpts で頭を 0 に詰めると音が早まるので、空きを無音で埋める
+            parts.append(f"[{ai}:a]aresample=async=1:first_pts=0,{_tempo(s.speed, s.gain_db)}aresample={SR},"
                          f"aformat=sample_fmts=fltp:channel_layouts=stereo,"
                          f"apad=whole_dur={d:.4f},atrim=end={d:.4f},asetpts=PTS-STARTPTS[a{i}]")
         else:

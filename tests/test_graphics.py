@@ -380,7 +380,7 @@ def t_gui(check, out: Path, fx: Path, tpl_dir: Path):
     code = (f"ROOT = {str(ROOT)!r}\nOUT = {str(out)!r}\nTPL = {str(tpl_dir)!r}\n"
             f"SHOT1 = {str(gdir / 'gui_review.png')!r}\nSHOT2 = {str(gdir / 'gui_samples.png')!r}\n"
             f"SHOT3 = {str(gdir / 'gui_clips.png')!r}\n" + GUI_CODE)
-    env = dict(os.environ, APPDATA=str(fx / "appdata"), PYTHONIOENCODING="utf-8")
+    env = dict(os.environ, APPDATA=str(fx / "appdata"), AVE_SETTINGS_DIR=str(fx / "appdata"), PYTHONIOENCODING="utf-8")
     try:
         p = subprocess.run([PY, "-c", code], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
                            errors="replace", env=env, timeout=300)

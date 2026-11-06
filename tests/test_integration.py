@@ -76,10 +76,12 @@ def t_units(check):
     cmd = rc_render._batch_cmd(segs, 640, 360, Fraction(30), Path("o.mkv"), [])
     inputs = [cmd[i + 1] for i, x in enumerate(cmd) if x == "-i"]
     fc = cmd[cmd.index("-filter_complex") + 1]
-    ok = inputs == ["/m/A.mp4", "/m/A.mp4", "/m/phone.mp4", "/m/photo.jpg"] and "[3:v]" in fc \
-        and "[2:v]setpts=(PTS-STARTPTS)/2," in fc and "[1:a]atempo=2," in fc and "[m1]" in fc
+    A, PH, PIC = (str(Path(p)) for p in ("/m/A.mp4", "/m/phone.mp4", "/m/photo.jpg"))   # Windows では「\m\A.mp4」になる
+    ok = inputs == [A, A, PH, PIC] and "[3:v]" in fc \
+        and "[2:v]setpts=(PTS-STARTPTS)/2," in fc and "[1:a]aresample=async=1:first_pts=0,atempo=2," in fc \
+        and "[m1]" in fc
     check("組み合わせ: 2台目とBロールの入力の番号がずれない", ok, f"{inputs} / {fc[:240]}")
-    i = cmd.index("/m/phone.mp4")
+    i = cmd.index(PH)
     check("組み合わせ: 早送りの2台目は倍率ぶん長く読む", cmd[i - 3:i] == ["-t", f"{2 + 0.1:.4f}", "-i"],
           str(cmd[i - 5:i]))
 

@@ -446,7 +446,7 @@ def t_gui(check, out: Path, d: Path):
     shutil.copytree(out, gd, ignore=shutil.ignore_patterns("work", "thumbnails", "*.mp4"))
     code = f"ROOT = {str(ROOT)!r}\nOUT = {str(gd)!r}\n" + GUI_CODE
     cfg = d / "appdata"
-    env = dict(os.environ, APPDATA=str(cfg), PYTHONIOENCODING="utf-8", XDG_CONFIG_HOME=str(cfg))
+    env = dict(os.environ, APPDATA=str(cfg), PYTHONIOENCODING="utf-8", XDG_CONFIG_HOME=str(cfg), AVE_SETTINGS_DIR=str(cfg))
     try:
         p = subprocess.run([PY, "-c", code], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
                            errors="replace", env=env, timeout=300)

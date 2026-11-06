@@ -449,7 +449,7 @@ def t_gui(check, fx: Path, work: Path, sd: Path | None):
     md = work / "gui_models"
     md.mkdir(exist_ok=True)
     (md / "download_failed.txt").write_text("test", encoding="utf-8")
-    env = dict(os.environ, APPDATA=str(fx / "appdata"), XDG_CONFIG_HOME=str(fx / "appdata"),
+    env = dict(os.environ, APPDATA=str(fx / "appdata"), XDG_CONFIG_HOME=str(fx / "appdata"), AVE_SETTINGS_DIR=str(fx / "appdata"),
                PYTHONIOENCODING="utf-8", AVE_MODEL_DIR=str(md))
     try:
         p = subprocess.run([PY, "-c", code], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",

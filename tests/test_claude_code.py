@@ -290,7 +290,7 @@ def t_gui(check, out: Path, fx: Path, base: Path):
     (d / "plan_edited.json").unlink(missing_ok=True)
     _fake(base)
     code = f"ROOT = {str(ROOT)!r}\nOUT = {str(d)!r}\n" + GUI_CODE
-    env = dict(os.environ, APPDATA=str(base / "appdata"), XDG_CONFIG_HOME=str(base / "appdata"),
+    env = dict(os.environ, APPDATA=str(base / "appdata"), XDG_CONFIG_HOME=str(base / "appdata"), AVE_SETTINGS_DIR=str(base / "appdata"),
                PYTHONIOENCODING="utf-8", ROUGHCUT_CLAUDE_BIN=str(base / ("claude.cmd" if os.name == "nt" else "claude")))
     env.pop("ANTHROPIC_API_KEY", None)
     p = subprocess.run([PY, "-c", code], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",

@@ -451,7 +451,7 @@ def t_gui(check, fx: Path):
     tdir = tplroot / "マイ テンプレ"
     shutil.copytree(fx / "tpl", tdir, ignore=shutil.ignore_patterns(rc_design.WORK_NAME))
     code = f"ROOT = {str(ROOT)!r}\nOUT = {str(base)!r}\nTDIR = {str(tdir)!r}\nTPLROOT = {str(tplroot)!r}\n" + GUI_CODE
-    env = dict(os.environ, APPDATA=str(fx / "appdata"), PYTHONIOENCODING="utf-8", XDG_CONFIG_HOME=str(fx / "appdata"))
+    env = dict(os.environ, APPDATA=str(fx / "appdata"), PYTHONIOENCODING="utf-8", XDG_CONFIG_HOME=str(fx / "appdata"), AVE_SETTINGS_DIR=str(fx / "appdata"))
     env.pop("ANTHROPIC_API_KEY", None)
     try:
         p = subprocess.run([PY, "-c", code], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
