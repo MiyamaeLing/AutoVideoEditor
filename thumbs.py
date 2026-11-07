@@ -3,6 +3,7 @@
 使い方の例:
   python thumbs.py "D:\\撮影\\レビュー_roughcut"                 # AIが場面と文字を選ぶ
   python thumbs.py "D:\\撮影\\レビュー_roughcut" --text "軽すぎ！"  # 文字を指定して作り直す
+  python thumbs.py "D:\\撮影\\レビュー_roughcut" --request "案2は文字を左に。もっと明るく"  # 今の案を見てAIが作り直す
 """
 from __future__ import annotations
 
@@ -34,11 +35,13 @@ def main():
     ap.add_argument("--effort", choices=["low", "medium", "high"], default=None,
                     help="AIの考える深さ（省略するとテンプレートの [thumbnail] の effort。初期値 high）")
     ap.add_argument("--text", help="サムネイルの文字を指定する（2行にするときは \\n で区切る）")
+    ap.add_argument("--request", default="",
+                    help="今のサムネイル案を見て、AIに指示して作り直す（例: 「案2は文字を左に」「もっと明るく」。--llm api のとき）")
     args = ap.parse_args()
     require_ffmpeg()
     if not (args.out_dir / "session.json").exists():
         sys.exit(f"[エラー] {args.out_dir / 'session.json'} がありません。先に荒編集を実行してください。")
-    generate(args.out_dir, Template(args.template), args.llm, args.effort, args.text)
+    generate(args.out_dir, Template(args.template), args.llm, args.effort, args.text, args.request)
 
 
 if __name__ == "__main__":

@@ -874,20 +874,45 @@ class ThumbDialog(QDialog):
         lay.addWidget(QLabel("クリックすると大きく開きます。気に入ったものは「YouTubeへ」画面の「サムネイル」で選ぶと、"
                              "動画に自動で設定されます。"))
         grid = QGridLayout()
-        files = sorted(tdir.glob("thumb_*.jpg"))
-        rows = sorted({f.stem.split("_")[1] for f in files})
-        for r, no in enumerate(rows):
+        import rc_thumb
+        import rc_thumbart
+        # 並べる順は rc_thumb.grid_files（AIに指示するとき、「案2の右端」などがAIにも同じ位置で伝わる）
+        for r, (no, files) in enumerate(rc_thumb.grid_files(tdir).items()):
             meta = next((i for i in info if str(i.get("image")) == no), {})
-            import rc_thumbart
             look = rc_thumbart.describe(meta)
-            cap = QLabel(f"案{no}：「{meta.get('text', '').replace(chr(92) + 'n', ' ')}」  {meta.get('reason', '')}"
+            cap = QLabel(f"案{no}：「{meta.get('text', '').replace(chr(92) + 'n', ' ').replace(chr(10), ' ')}」  "
+                         f"{meta.get('reason', '')}"
                          + (f"\n　デザイン: {look}" if look else ""))
             cap.setStyleSheet("font-weight: bold; margin-top: 6px;")
             grid.addWidget(cap, r * 2, 0, 1, 3)
-            for c, f in enumerate(sorted(tdir.glob(f"thumb_{no}_*.jpg"))):
+            for c, f in enumerate(files):
                 grid.addWidget(ClickLabel(f), r * 2 + 1, c)
         lay.addLayout(grid)
         lay.addStretch(1)
+        # AIに指示して作り直す（前回の案の画像と、これまでの指示もAIに見せる）
+        api = page.win.create.llm.currentData() == "api"
+        made = rc_thumb.requests_made(tdir)
+        if made:
+            self.made = QLabel("反映ずみの指示: " + " ／ ".join(made[-3:]))
+            self.made.setWordWrap(True)
+            self.made.setStyleSheet("color: gray;")
+            lay.addWidget(self.made)
+        ask_row = QHBoxLayout()
+        self.request = QLineEdit()
+        self.request.setPlaceholderText("AIへの指示（例: 案2は文字を左に・もっと明るく・バッジは要らない・真ん中の段の右端は別の場面で）")
+        self.request.returnPressed.connect(self._ask)
+        self.b_ask = QPushButton("AIに指示して作り直す")
+        self.b_ask.clicked.connect(self._ask)
+        if api:
+            self.b_ask.setToolTip("今の案の画像と、これまでの指示もAIに見せて作り直します（指示は積み重なります。"
+                                  "「AIに選び直してもらう」でまっさらに戻ります）")
+        else:
+            for w in (self.request, self.b_ask):
+                w.setEnabled(False)
+                w.setToolTip("「作成」タブの AI を「Claude APIで自動」にすると、AIに指示して作り直せます。")
+        ask_row.addWidget(self.request, 1)
+        ask_row.addWidget(self.b_ask)
+        lay.addLayout(ask_row)
         row = QHBoxLayout()
         self.text = QLineEdit()
         self.text.setPlaceholderText("自分で文字を決めて作り直す（例: 軽すぎ！　2行にするときは \\n で区切る）")
@@ -895,7 +920,7 @@ class ThumbDialog(QDialog):
         redo.clicked.connect(self._redo)
         again = QPushButton("AIに選び直してもらう")
         again.clicked.connect(lambda: (self.accept(), self.page.thumbnails(text="")))
-        if page.win.create.llm.currentData() != "api":
+        if not api:
             again.setEnabled(False)
             again.setToolTip("「作成」タブの AI を「Claude APIで自動」にすると、AIが画像を見て選び直します。")
         folder = QPushButton("フォルダを開く")
@@ -912,6 +937,12 @@ class ThumbDialog(QDialog):
         if t:
             self.accept()
             self.page.thumbnails(text=t)
+
+    def _ask(self):
+        t = self.request.text().strip()
+        if t and self.b_ask.isEnabled():
+            self.accept()
+            self.page.thumbnails(request=t)
 
 
 class YouTubeDialog(QDialog):
@@ -1912,12 +1943,13 @@ class ReviewPage(QWidget):
                                         "（このあとフォルダを開きます）")
                 open_path(self.out)
 
-    def thumbnails(self, text: str | None = None):
-        """サムネイル案があれば表示し、なければ作る（text 指定時は、その文字で作り直す）"""
+    def thumbnails(self, text: str | None = None, request: str | None = None):
+        """サムネイル案があれば表示し、なければ作る（text 指定時は、その文字で作り直す。
+        request 指定時は、今の案を見たAIへの指示で作り直す）"""
         if not self.out:
             return
         tdir = self.out / "thumbnails"
-        if text is None and list(tdir.glob("thumb_*.jpg")):
+        if text is None and request is None and list(tdir.glob("thumb_*.jpg")):
             ThumbDialog(self, tdir).exec()
             return
         if not text and not self.win.check_api_key(self.win.create.llm.currentData()):
@@ -1926,6 +1958,8 @@ class ReviewPage(QWidget):
         args = [str(self.out), "--template", self._template(), "--llm", self.win.create.llm.currentData()]
         if text:
             args += ["--text", text]
+        if request:
+            args += ["--request", request]
 
         def done(ok):
             self._update_buttons()

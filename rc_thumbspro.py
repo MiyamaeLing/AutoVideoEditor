@@ -564,10 +564,14 @@ def compose_person(frame: Image.Image, alpha: np.ndarray, text: str, style: str,
     fp, idx = font
     free_w = int(W - pw - margin * 2 + pw * 0.12) if px > W * 0.2 or px < 0 else int(W * 0.5)
     free_w = max(int(W * 0.42), min(int(W * 0.62), free_w))
-    f, size = T._fit(fp, idx, lines, free_w - 60, H - 120, start=210, pad=T._pad(st))
+    # 文字が右なら、右下の再生時間の表示にかからない高さに収める
+    max_h = H - 120 if side == "right" else T.TIME_BOX[1] - T.TIME_GAP - 40
+    f, size = T._fit(fp, idx, lines, free_w - 60, max_h, start=210, pad=T._pad(st))
     total_h = int(size * 1.15) * len(lines)
     tx = 40 if side == "right" else W - free_w + 20
-    T._draw_styled(canvas, lines, f, size, tx, (H - total_h) / 2 - size * 0.05, "left", {**st, "_accent": accent})
+    ty = (H - total_h) / 2 - size * 0.05
+    ty = max(24.0, ty - T._time_lift(T._line_pos(lines, f, size, tx, ty, "left"), f, size * T._ink(st)))
+    T._draw_styled(canvas, lines, f, size, tx, ty, "left", {**st, "_accent": accent})
     return canvas.filter(ImageFilter.UnsharpMask(radius=1.2, percent=50, threshold=2))
 
 

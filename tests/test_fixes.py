@@ -17,6 +17,7 @@
   - ドラッグ＆ドロップのファイルを名前の順に並べる、& を含む名前を読み取る
   - 屋外モードで反映しても「カット候補」の印が残る
   - 章カードを避けてずらしたテロップに合わせて効果音を鳴らす
+  - サムネイル案の画面から、AIに指示して作り直す（thumbs.py --request。AIが「Claude APIで自動」のときだけ）（GUI）
 """
 from __future__ import annotations
 
@@ -555,7 +556,31 @@ for _ in range(5):
 td.grab().save(str(out / "gui_fixes_thumbs.png"))
 labels = [c.text() for c in td.findChildren(gui.QLabel)]
 res["thumb_text"] = any("YouTubeへ" in t for t in labels)
+res["ask_off_without_api"] = not td.request.isEnabled() and not td.b_ask.isEnabled()
 td.reject()
+
+# --- サムネイル画面から、AIに指示して作り直す ---
+w.create.llm.setCurrentIndex(w.create.llm.findData("api", 257))
+(out / "thumbnails").mkdir(exist_ok=True)
+(out / "thumbnails" / "requests.json").write_text(json.dumps(["文字を大きく"], ensure_ascii=False), encoding="utf-8")
+td = gui.ThumbDialog(rv, out / "thumbnails")
+asked = []
+real_thumbs = rv.thumbnails
+rv.thumbnails = lambda **k: asked.append(k)
+td.request.setText("  案2は文字を左に ")
+td.b_ask.click()
+rv.thumbnails = real_thumbs
+res["ask_made"] = any("反映ずみの指示: 文字を大きく" in c.text() for c in td.findChildren(gui.QLabel))
+res["ask_call"] = asked
+started = []
+real_start2, real_key = w.runner.start, w.check_api_key
+w.runner.start = lambda script, args, *a, **k: started.append([script] + list(args))
+w.check_api_key = lambda *a, **k: True
+rv.thumbnails(request="案2は文字を左に")
+w.runner.start, w.check_api_key = real_start2, real_key
+res["ask_args"] = started[-1] if started else []
+(out / "thumbnails" / "requests.json").unlink()
+w.create.llm.setCurrentIndex(w.create.llm.findData("none"))
 print("RESULT " + json.dumps(res, ensure_ascii=False))
 '''
 
@@ -602,6 +627,12 @@ def t_gui(check, out: Path, fx: Path):
     check("GUI: UTF-8の区切れ目で文字化けしない", r["utf8_split"])
     check("GUI: YouTube画面に動画ID欄", r["yt_vid_field"])
     check("GUI: サムネイル画面の案内", r["thumb_text"])
+    check("GUI: サムネイル画面のAIへの指示は、AIが「Claude APIで自動」のときだけ使える", r["ask_off_without_api"])
+    check("GUI: サムネイル画面から、AIに指示して作り直す（反映ずみの指示も表示）",
+          r["ask_call"] == [{"request": "案2は文字を左に"}] and r["ask_made"], str(r["ask_call"]))
+    a = r["ask_args"]
+    check("GUI: 指示は thumbs.py --request で渡す", a[:1] == ["thumbs.py"] and "--request" in a
+          and a[a.index("--request") + 1] == "案2は文字を左に" and "--text" not in a, str(a))
 
 
 # ---------------------------------------------------------------- まとめ

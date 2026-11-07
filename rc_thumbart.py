@@ -23,6 +23,7 @@ import rc_thumb as T
 W, H = T.W, T.H
 LAYOUTS = ("bottom", "band", "side", "vertical")   # AIが選べるデザイン
 EFFECTS = {"none": "", "focus": "主役を際立たせる", "sticker": "主役に白いふち", "depth": "文字を主役の後ろに"}
+SHADES = {"light": "影うすめ（明るく）", "normal": "", "strong": "影こいめ（文字くっきり）"}   # 文字の後ろを暗くする強さ
 EMPH_MAX = 8        # 強調する言葉の長さの上限
 BADGE_MAX = 6       # バッジの言葉の長さの上限
 MIN_CONTRAST = 20   # 切り抜き: 主役とまわりの色の差（Lab）がこれより小さければ、切り抜きは当てにしない
@@ -44,7 +45,9 @@ def clean_design(p, text: str, label: str = "") -> dict:
     if len(badge) > BADGE_MAX or badge in (flat, re.sub(r"\s+", "", label or "")):
         badge = ""
     effect = str(p.get("effect") or "none")
-    return {"emphasis": emph, "badge": badge, "effect": effect if effect in EFFECTS else "none"}
+    shade = str(p.get("shade") or "normal")
+    return {"emphasis": emph, "badge": badge, "effect": effect if effect in EFFECTS else "none",
+            "shade": shade if shade in SHADES else "normal"}
 
 
 _NUM = re.compile(r"[0-9０-９]+(?:[.,．，][0-9０-９]+)?\s*(?:kg|mm|cm|km|mAh|GB|TB|g|m|W|V|%|％|万円|円|万|倍|年|日|時間|分|秒|"
@@ -77,6 +80,8 @@ def describe(d: dict) -> str:
         parts.append(f"バッジ「{d['badge']}」")
     if EFFECTS.get(d.get("effect") or "none"):
         parts.append(EFFECTS[d["effect"]])
+    if SHADES.get(d.get("shade") or "normal"):
+        parts.append(SHADES[d["shade"]])
     return "・".join(parts)
 
 
@@ -344,10 +349,16 @@ def apply_effect(img: Image.Image, effect: str, cut, subject, st: dict) -> Image
             T._paint(out, (255, 255, 255), big.filter(ImageFilter.GaussianBlur(0.8)))
         out.paste(img, (0, 0), m)
         return out
-    # focus（と、切り抜けなかった sticker）・depth: 主役以外を暗く（focus は少しぼかす）
+    # focus（と、切り抜けなかった sticker）・depth: 主役以外を少し暗く（focus は少しぼかす）。
+    # 暗くしすぎると写真全体が黒っぽく沈むので控えめに。切り抜けないときは枠で代わりにするので、さらに控えめ
     m = _alpha_img(cut).filter(ImageFilter.GaussianBlur(2)) if cut is not None else _box_alpha(subject)
-    blur, dark = {"depth": (0.0, 0.85)}.get(effect, (4.0, 0.62 if elegant else 0.68))
-    bg = img.filter(ImageFilter.GaussianBlur(blur if cut is not None else blur / 2)) if blur else img
+    if effect == "depth":
+        blur, dark = 0.0, 0.9
+    elif cut is not None:
+        blur, dark = 3.0, 0.8 if elegant else 0.82
+    else:
+        blur, dark = 1.5, 0.88
+    bg = img.filter(ImageFilter.GaussianBlur(blur)) if blur else img
     return Image.composite(img, ImageEnhance.Brightness(bg).enhance(dark), m)
 
 
@@ -441,7 +452,8 @@ def _overlap(a, b) -> float:
 
 
 def draw_badge(img: Image.Image, text: str, st: dict, accent, tbox, subject, fp, idx):
-    """バッジを、文字にも大事な所にも重ならない、文字の近くか画面の角に置く。置いた枠（置けなければ None）"""
+    """バッジを、文字にも大事な所にも重ならない、文字の近くか画面の角に置く（右下は再生時間の表示で隠れるので置かない）。
+    置いた枠（置けなければ None）"""
     if not text:
         return None
     b = badge_image(text, st, _badge_color(st, accent), fp, idx)
@@ -458,7 +470,7 @@ def draw_badge(img: Image.Image, text: str, st: dict, accent, tbox, subject, fp,
         x, y = min(max(x, 4), W - bw - 4), min(max(y, 4), H - bh - 4)
         box = (x + bw * 0.15, y + bh * 0.15, x + bw * 0.85, y + bh * 0.85)   # 影・余白を除いた中身
         over_t, over_s = _overlap(box, tbox), _overlap(box, subject)
-        if over_t > 0.12:   # 文字にはほとんど重ねない（シールが文字の角に少しかかるのはよい）
+        if over_t > 0.12 or T.time_hit(box):   # 文字にはほとんど重ねない（角に少しかかるのはよい）。右下の再生時間の表示は避ける
             continue
         near = 0.0
         if tbox:

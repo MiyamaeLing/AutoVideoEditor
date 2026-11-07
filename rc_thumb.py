@@ -24,7 +24,18 @@ from rc_timeline import Timeline
 
 W, H = 1280, 720
 N_CANDIDATES = 12
+# YouTube の一覧では、サムネイルの右下に動画の長さ（「12:34」など）が重ねて表示される。
+# 文字・見出し・バッジはここ（と、まわりに TIME_GAP の余白）に置かない
+TIME_BOX = (W - 240, H - 110, W, H)
+TIME_GAP = 10
 
+_BOX_SMALL = {
+    "type": "object", "additionalProperties": False, "required": ["x0", "y0", "x1", "y1"],
+    "description": "画面の左上を0、右下を100とした%の枠",
+    "properties": {k: {"type": "integer", "description": d} for k, d in (
+        ("x0", "左端（%）"), ("y0", "上端（%）"), ("x1", "右端（%）"), ("y1", "下端（%）"))}}
+_BOX = {**_BOX_SMALL, "description": "文字で隠してはいけない大事な所（顔・商品・ロゴ・表示など）をまとめて囲む枠。"
+                                     "画面の左上を0、右下を100とした%"}
 PICK_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -34,19 +45,17 @@ PICK_SCHEMA = {
             "type": "array",
             "items": {
                 "type": "object", "additionalProperties": False,
-                "required": ["frame", "text", "label", "text_position", "subject_box", "reason"],
+                "required": ["frame", "text", "label", "text_position", "subject_box", "keep_boxes", "reason"],
                 "properties": {
                     "frame": {"type": "integer", "description": "候補画像の番号"},
                     "text": {"type": "string", "description": "サムネイルの文字。12字以内。改行は\\n（2行まで）"},
                     "label": {"type": "string", "description": "大きな文字の上に添える見出し（商品名・ブランド名など。10字以内。なければ空）"},
                     "text_position": {"type": "string", "enum": ["top", "bottom", "left", "right", "any"],
                                       "description": "大きな文字を置いても、顔・商品・表示などの大事な所が隠れない側"},
-                    "subject_box": {
-                        "type": "object", "additionalProperties": False, "required": ["x0", "y0", "x1", "y1"],
-                        "description": "文字で隠してはいけない大事な所（顔・商品・ロゴ・表示など）をまとめて囲む枠。"
-                                       "画面の左上を0、右下を100とした%",
-                        "properties": {k: {"type": "integer", "description": d} for k, d in (
-                            ("x0", "左端（%）"), ("y0", "上端（%）"), ("x1", "右端（%）"), ("y1", "下端（%）"))}},
+                    "subject_box": _BOX,
+                    "keep_boxes": {"type": "array", "items": _BOX_SMALL,
+                                   "description": "主役のほかに、文字で隠してはいけない所（はかりの表示・ロゴ・顔・ペンなど）を"
+                                                  "1つずつぴったり囲む枠。0〜3個"},
                     "reason": {"type": "string"},
                 },
             },
@@ -62,6 +71,8 @@ ART_FIELDS = {
                "description": "写真の加工: focus=主役以外を暗く・ぼかす / sticker=主役に白いふち / depth=文字を主役の後ろに / none"},
     "layouts": {"type": "array", "items": {"type": "string", "enum": ["bottom", "band", "side", "vertical"]},
                 "description": "この写真に合うデザインを合う順に3つ（bottom=大きな文字 / band=帯 / side=横に文字 / vertical=縦書き）"},
+    "shade": {"type": "string", "enum": ["light", "normal", "strong"],
+              "description": "文字の後ろを暗くする強さ: light=写真の明るさを活かす / normal / strong=文字をくっきり"},
 }
 EFFORTS = ("low", "medium", "high")
 
@@ -217,25 +228,133 @@ ART_PROMPT = """デザイン（あなたはアートディレクターも兼ね�
   depth = 大きな文字を主役の後ろに回して奥行きを出す（主役が大きく、背景とはっきり違う色のとき）
   none = 加工しない（写真がそのままで美しいとき）
   切り抜きは大事な所の枠（subject_box）をもとにするので、sticker・depth のときは枠に主役だけを入れる（ほかの物はなるべく含めない）
+- shade: 文字を読みやすくするために、文字の後ろ（画面の下半分・右半分など）を暗くする強さ。ふつうは normal。
+  明るく爽やかに見せたい写真は light（文字が読める範囲で薄く）、文字をくっきり目立たせたいときは strong
 - layouts: 4つのデザインから、この写真に合う3つを合う順に。bottom=大きな文字（上か下） / band=帯（上か下） / side=横に文字（左か右） / vertical=縦書き（上品な見せ方・工芸品・和の題材に合う。縦に空いた所があるとき）
 - 3枚の案が同じ組み合わせにならないよう、変化をつける
 """
 
 
-def pick_with_ai(cands, title: str, text_ideas: list[str], mode: str, effort: str, style: str = "", art: bool = False):
-    """Claude に候補画像を見せて3枚を選んでもらう。art=True なら、デザイン（強調・バッジ・効果・組み合わせ）も決めてもらう"""
+# ---------------- 作り直し（サムネイル案の画面から、AIに指示する） ----------------
+
+REQ_SHOW = 5   # AIに見せる、これまでの指示の数（新しい順に）
+LAY_NAMES = {"bottom": "大きな文字", "band": "帯", "side": "横に文字", "vertical": "縦書き", "person": "人物の切り抜き"}
+
+REQUEST_PROMPT = """作り直し:
+- 前回のサムネイル案（画像と内容）と、それを見た人の指示があります。指示を最優先で反映してください
+- 指示に関係ない所（場面・文字・見出し・デザイン）は、前回の案をなるべくそのまま保つ（同じ場面なら、その候補番号を選ぶ）
+- 3つの案の順番も前回に合わせる（前回の案1を直したものを1番目に）
+- 「案2」「真ん中の段」「右端」などは、前回の案の画面での位置です（案1が上の段。各段の画像は、書いてある順に左から並ぶ）
+- これまでの指示も守り続ける。今回の指示と食い違うときは今回を優先
+- 指示は、決められる項目で反映する。例: 「文字を左に」→ text_position、「別の場面で」→ frame、「言葉を変えて」→ text・label
+"""
+REQUEST_ART = """  「もっと明るく」→ shade を light（effect は focus 以外に）、「文字をくっきり」→ shade を strong、
+  「この並べ方は要らない」→ layouts から外す、「バッジは要らない」→ badge を空に、「切り抜きはやめて」→ effect を none
+"""
+
+
+def _image_block(path_or_img, size=(512, 288)) -> dict:
+    im = path_or_img if isinstance(path_or_img, Image.Image) else Image.open(path_or_img)
+    buf = io.BytesIO()
+    im.convert("RGB").resize(size).save(buf, "JPEG", quality=80)
+    return {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                        "data": base64.b64encode(buf.getvalue()).decode()}}
+
+
+def grid_files(tdir: Path) -> dict[str, list[Path]]:
+    """サムネイル案の画像を、サムネイル案の画面に並べる順で {案の番号: [画像]}（段は案の番号順、各段は左から）"""
+    rows: dict[str, list[Path]] = {}
+    for f in sorted(tdir.glob("thumb_*.jpg")):
+        rows.setdefault(f.stem.split("_")[1], []).append(f)
+    return dict(sorted(rows.items(), key=lambda kv: (len(kv[0]), kv[0])))
+
+
+def _row_name(r: int, n: int) -> str:
+    names = {2: ["上の段", "下の段"], 3: ["上の段", "真ん中の段", "下の段"]}
+    return "" if n < 2 else names.get(n, [f"上から{k + 1}段目" for k in range(n)])[r]
+
+
+def _col_name(c: int, n: int) -> str:
+    if n < 2:
+        return ""
+    return "左端" if c == 0 else "右端" if c == n - 1 else "真ん中" if n == 3 else f"左から{c + 1}枚目"
+
+
+def requests_made(tdir: Path) -> list[str]:
+    """今のサムネイル案に反映ずみの、AIへの指示（古い順）"""
+    try:
+        return [str(x) for x in json.loads((tdir / "requests.json").read_text(encoding="utf-8")) if str(x).strip()]
+    except (OSError, ValueError, TypeError):
+        return []
+
+
+def _previous(tdir: Path) -> dict:
+    """作り直す前のサムネイル案（AIに見せる）。画像は、消す前に読み込んでおく"""
+    try:
+        info = json.loads((tdir / "thumbnails.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        info = []
+    rows = grid_files(tdir)
+    out = []
+    for r, (no, files) in enumerate(rows.items()):
+        meta = next((i for i in info if str(i.get("image")) == no), {})
+        ims = []
+        for c, f in enumerate(files):
+            lay = f.stem.split("_", 2)[-1]
+            where = "・".join(x for x in (_col_name(c, len(files)), LAY_NAMES.get(lay, lay)) if x)
+            try:
+                ims.append((where, _image_block(f)))
+            except OSError:
+                pass
+        out.append({"no": no, "where": _row_name(r, len(rows)), "meta": meta, "images": ims})
+    return {"rows": out, "history": requests_made(tdir)}
+
+
+def _request_content(request: str, prev: dict | None, cands) -> list[dict]:
+    """AIに見せる、前回の案と指示"""
+    blocks = []
+    rows = (prev or {}).get("rows") or []
+    if rows:
+        blocks.append({"type": "text", "text": "ここからは前回のサムネイル案です（この画面を見て指示しています）。"})
+    for row in rows:
+        m = row["meta"]
+        t = m.get("source_time")
+        no = next((c["no"] for c in cands if t is not None and abs(c.get("t", -99) - float(t)) < 0.05), None)
+        text = str(m.get("text", "")).replace("\n", "\\n")   # 答えと同じ書き方（2行は \n で区切る）
+        d = [f"場面: 候補{no}" if no else "場面: 今回の候補にない場面", f"文字「{text}」"]
+        if m.get("label"):
+            d.append(f"見出し「{m['label']}」")
+        d.append(f"text_position: {m.get('text_position', 'any')}")
+        d += [f"{k}: {m[k] or '（なし）'}" for k in ("emphasis", "badge", "effect", "shade") if k in m]
+        if row["images"]:
+            d.append("左から " + "、".join(w for w, _b in row["images"]))
+        name = f"前回の案{row['no']}" + (f"（{row['where']}）" if row["where"] else "")
+        blocks.append({"type": "text", "text": f"{name}: " + "／".join(d)})
+        for where, block in row["images"]:
+            blocks.append({"type": "text", "text": f"前回の案{row['no']}" + (f"・{where}" if where else "")})
+            blocks.append(block)
+    hist = ((prev or {}).get("history") or [])[-REQ_SHOW:]
+    if hist:
+        blocks.append({"type": "text", "text": "これまでの指示（古い順。前回の案はこれを反映ずみ。引き続き守る）:\n"
+                       + "\n".join(f"- {h}" for h in hist)})
+    blocks.append({"type": "text", "text": f"今回の指示: {request}"})
+    return blocks
+
+
+def pick_with_ai(cands, title: str, text_ideas: list[str], mode: str, effort: str, style: str = "", art: bool = False,
+                 request: str = "", prev: dict | None = None):
+    """Claude に候補画像を見せて3枚を選んでもらう。art=True なら、デザイン（強調・バッジ・効果・組み合わせ）も決めてもらう。
+    request: 作り直すときの指示（prev: 前回の案。_previous）"""
     import rc_llm
     anthropic, client = rc_llm._client()
     content = []
     for c in cands:
-        im = Image.open(c["path"]).resize((512, 288))
-        buf = io.BytesIO()
-        im.save(buf, "JPEG", quality=80)
         note = f"／{c['note']}" if c.get("note") else ""   # 顔の様子（rc_thumbspro）
         content.append({"type": "text", "text": f"候補{c['no']}（{c['why']}{note}）"})
-        content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
-                                                    "data": base64.b64encode(buf.getvalue()).decode()}})
+        content.append(_image_block(c["path"]))
     content.append({"type": "text", "text": f"動画のタイトル案: {title}\n文字の案: {'、'.join(text_ideas) or '（なし）'}"})
+    if request:
+        content += _request_content(request, prev, cands)
     system = f"""あなたはYouTubeのサムネイルを作るデザイナーです。動画から取り出した候補画像の中から、サムネイルの背景に向いているものを3枚選び、それぞれに入れる文字を決めてください。
 動画のジャンル: {rc_llm.MODE_HINT.get(mode, '')}
 
@@ -253,7 +372,11 @@ def pick_with_ai(cands, title: str, text_ideas: list[str], mode: str, effort: st
 - 大きな文字（2行・画面の半分くらい）を置いても、顔・商品・はかりの表示など大事な所が隠れない側を top/bottom/left/right から選ぶ。どこでもよければ any
 大事な所の枠（subject_box）:
 - 文字で隠してはいけない所（顔・商品・ロゴ・はかりの表示など）をまとめて囲む枠。画面の左上を0、右下を100とした%で、少し余裕をもって囲む
-{ART_PROMPT if art else ""}出力はJSONのみです。"""
+隠してはいけない所の枠（keep_boxes）:
+- 大事な所の枠の中で、特に隠してはいけない物（はかりの表示・ロゴ・顔・ペンなど）を1つずつ、ぴったり囲む（0〜3個）。
+  斜めに置いた細長い物は、物の向きに沿って2つに分けて囲んでもよい。文字はこれを避け、枠の中の平らな所（台・箱の面など）には置いてよい
+- YouTube では画面の右下（横の右から2割・縦の下から15%くらい）に動画の長さが重ねて表示されて隠れる。大事な所がそこに来る画像は避ける
+{ART_PROMPT if art else ""}{(REQUEST_PROMPT + (REQUEST_ART if art else "")) if request else ""}出力はJSONのみです。"""
     usage = {"in": 0, "out": 0}
     res = rc_llm._call(client, anthropic, system, content, pick_schema(art), effort, usage)
     nos = {c["no"] for c in cands}
@@ -356,14 +479,18 @@ def _emph_runs(lines, emphasis: str = "") -> list[list[tuple[str, bool]]]:
     return out
 
 
+LINE_GAP = 0.12   # 行と行の、見た目の字（ベースラインより下に出る g・y なども含む）の間の最小のすき間（文字の大きさに対する割合）
+
+
 def _rich(lines, font, size, emphasis: str = ""):
     """強調する言葉がある行の並び [(行の幅, 行の高さ, いちばん高い字の上からベースラインまで, [(文字, フォント, 強調か, 行頭からの位置)])]。
-    強調が無ければ None（今までどおりの並べ方）"""
+    強調が無ければ None（今までどおりの並べ方）。
+    大きくした強調の言葉の「g」などが次の行の字に重ならないよう、見た目の字の上下で行の間を空ける"""
     runs = _emph_runs(lines, emphasis)
     if not any(em for r in runs for _, em in r):
         return None
     ef = _font(font.path, font.index, int(size * EMPH_SCALE))
-    rows = []
+    rows, inks = [], []
     for r in runs:
         fs = [ef if em else font for _, em in r]
         asc = max(f.getmetrics()[0] for f in fs)
@@ -371,8 +498,14 @@ def _rich(lines, font, size, emphasis: str = ""):
         for (s, em), f in zip(r, fs):
             items.append((s, f, em, x))
             x += f.getlength(s)
-        rows.append((items[-1][3] + fs[-1].getbbox(r[-1][0])[2], int(max(f.size for f in fs) * 1.15), asc, items))
-    return rows
+        rows.append([items[-1][3] + fs[-1].getbbox(r[-1][0])[2], int(max(f.size for f in fs) * 1.15), asc, items])
+        boxes = [f.getbbox(s, anchor="ls") for (s, _em), f in zip(r, fs) if s.strip()]   # ベースラインからの上下
+        inks.append((min(b[1] for b in boxes), max(b[3] for b in boxes)) if boxes else (0, 0))
+    gap = size * LINE_GAP
+    for i in range(len(rows) - 1):   # 次の行の字の上が、この行の字の下より gap 以上下になるように
+        need = rows[i][2] + inks[i][1] + gap - (rows[i + 1][2] + inks[i + 1][0])
+        rows[i][1] = max(rows[i][1], int(np.ceil(need)))
+    return [tuple(r) for r in rows]
 
 
 def _text_pos(lines, font, size, x, y, align, emphasis: str = ""):
@@ -471,6 +604,32 @@ def _glyphs(pos, font) -> list[tuple[float, float, float, float]]:
                 dx = g.x + f.getlength(g.s[:k])
                 out.append((dx + b[0], g.y + b[1], dx + b[2], g.y + b[3]))
     return out
+
+
+def time_hit(box) -> bool:
+    """枠が、右下の再生時間の表示（と余白）にかかるか"""
+    return bool(box) and box[2] > TIME_BOX[0] - TIME_GAP and box[3] > TIME_BOX[1] - TIME_GAP
+
+
+def _ink(st: dict) -> float:
+    """字の外にはみ出すふち・影の幅（文字の大きさに対する割合）"""
+    return 0.2 if st.get("effect") == "outline" else 0.08
+
+
+def _time_boxes(pos, font, grow: float):
+    return [(b[0] - grow, b[1] - grow, b[2] + grow, b[3] + grow) for b in _glyphs(pos, font)]
+
+
+def _time_lift(pos, font, grow: float = 0.0) -> float:
+    """文字（ふち・影の幅 grow を含む）が右下の再生時間の表示にかかるとき、上へずらす量（かからなければ 0）"""
+    hit = [b for b in _time_boxes(pos, font, grow) if time_hit(b)]
+    return max(b[3] for b in hit) - (TIME_BOX[1] - TIME_GAP) if hit else 0.0
+
+
+def _time_shift(pos, font, grow: float = 0.0) -> float:
+    """文字（ふち・影の幅 grow を含む）が右下の再生時間の表示にかかるとき、左へずらす量（かからなければ 0）"""
+    hit = [b for b in _time_boxes(pos, font, grow) if time_hit(b)]
+    return max(b[2] for b in hit) - (TIME_BOX[0] - TIME_GAP) if hit else 0.0
 
 
 def _rows(pos) -> list[list]:
@@ -709,15 +868,49 @@ def _accent(img: Image.Image, st: dict):
     return tuple(int(c * 255) for c in colorsys.hsv_to_rgb(h, s, v))
 
 
-def _shade(img: Image.Image, side: str, reach: float, strength: int):
-    """文字を置く側（side）から、暗いグラデーションをかける。reach: 画面のどこまで（0〜1）"""
+SHADE_FADE = 170     # 暗くした所から、元の明るさに戻るまでの長さ（ピクセル）
+SHADE_TARGET = 120   # 文字の後ろの明るさ（0〜255）をここまで下げれば、白い文字が読める
+SHADE_MIN = 0.25     # 写真がもともと暗くても、見せ方の影の濃さのこの割合は付ける（見た目をそろえる）
+
+
+SHADE_TONES = {"light": (0.6, 150), "normal": (1.0, SHADE_TARGET), "strong": (1.3, 95)}   # (濃さの上限の倍率, 目標の明るさ)
+
+
+def _shade_need(img: Image.Image, box, cap: float, tone: str = "normal") -> int:
+    """文字の後ろ（box）を、白い文字が読める明るさまで下げるのに要る影の濃さ（0〜255）。
+    明るい紙の上なら濃く、紺の箱の上などもともと暗い所ならごく薄く。見せ方の濃さ cap を超えない。
+    tone: AIが決めた強さ（light=写真の明るさを活かす / normal / strong=文字をくっきり）"""
+    mult, target = SHADE_TONES.get(tone, SHADE_TONES["normal"])
+    cap = min(255.0, cap * mult)
+    if cap <= 0:
+        return 0
+    x0, y0, x1, y1 = (int(max(0, min(v, lim))) for v, lim in zip(box, (W, H, W, H)))
+    if x1 - x0 < 2 or y1 - y0 < 2:
+        return int(cap * SHADE_MIN)
+    lum = float(np.percentile(np.asarray(img.convert("L").crop((x0, y0, x1, y1))), 70))
+    need = 255 * (1 - target / lum) if lum > target else 0.0
+    return int(min(cap, max(cap * SHADE_MIN, need)))
+
+
+def _shade(img: Image.Image, axis: str, lo: float, hi: float, strength: int, edge: str | None = None):
+    """文字の後ろを、画面の幅（または高さ）いっぱいの帯で暗くする。帯の外はなめらかに元の明るさに戻す。
+    axis="y": 横いっぱいの帯（高さ lo〜hi。画面の下半分など） / axis="x": 縦いっぱいの帯（幅 lo〜hi。画面の右半分など）。
+    strength: 文字の後ろの影の濃さ（0〜255。_shade_need）。
+    edge（top/bottom/left/right）: 帯を画面の端から始めるとき、その端に近いほど少し濃くする。
+    文字のまわりだけを暗くすると、まわりに半端な明るい所が残るので、端から端までまとめて暗くする"""
     if strength <= 0:
         return
-    n = W if side in ("left", "right") else H
-    ramp = np.clip(1 - np.arange(n) / (n * reach), 0, 1) ** 1.4 * strength
-    if side in ("right", "bottom"):
-        ramp = ramp[::-1]
-    g = Image.fromarray(ramp.astype(np.uint8)[None, :] if side in ("left", "right") else ramp.astype(np.uint8)[:, None])
+    n = H if axis == "y" else W
+    d = np.arange(n, dtype=np.float32)
+    lo, hi = max(0.0, lo), min(float(n), hi)
+    if edge in ("bottom", "right"):     # 端からの距離で考える
+        d, lo, hi = n - 1 - d, n - hi, n - lo
+    inside = 1.0 if edge is None else 1.1 - 0.2 * np.clip(d / max(hi, 1.0), 0, 1)
+    out = np.clip(1 - np.maximum(lo - d, d - hi) / SHADE_FADE, 0, 1)
+    out = out * out * (3 - 2 * out)    # なめらかに戻す
+    ramp = np.where((d >= lo) & (d <= hi), inside, (0.9 if edge else 1.0) * out) * strength
+    g = ramp.clip(0, 255).astype(np.uint8)
+    g = Image.fromarray(g[:, None] if axis == "y" else g[None, :])
     _paint(img, (0, 0, 0), g.resize((W, H)))
 
 
@@ -832,7 +1025,9 @@ def subject_px(box) -> tuple[float, float, float, float] | None:
 
 
 def _hide(subject, box) -> float:
-    """文字の枠（box）が、大事な所（subject）をどれだけ隠すか（隠す割合 × 重み）。大事な所が無ければ 0"""
+    """文字の枠（box）が、大事な所（subject。枠か Keep）をどれだけ隠すか（隠す割合 × 重み）。大事な所が無ければ 0"""
+    if isinstance(subject, Keep):
+        return subject.hide([box])
     if not subject:
         return 0.0
     ix = max(0.0, min(box[2], subject[2]) - max(box[0], subject[0]))
@@ -849,36 +1044,245 @@ def _moved(subject, x0: float, y0: float, cw: float, ch: float):
     return ((subject[0] - x0) * sx, (subject[1] - y0) * sy, (subject[2] - x0) * sx, (subject[3] - y0) * sy)
 
 
-def _side_place(img, subject, bw, bh, position, margin, hide_w=1.0):
-    """横に文字・縦書き: 文字を置く側（左右）と上下の位置、写真の切り出し (x0, y0, 幅, 高さ)。
-    写真を文字の反対側に少し寄せる（左右の端に黒い帯を作らない）。大事な所を隠さない置き方を優先し、次に写真の細かさの少ない所"""
+def _cell(box):
+    """1280×720 の枠を、地図（160×90）のマス目の範囲にする"""
+    x0, y0, x1, y1 = [int(round(v / 8)) for v in box]
+    x0, y0 = min(max(0, x0), 159), min(max(0, y0), 89)
+    return x0, y0, min(160, max(x1, x0 + 1)), min(90, max(y1, y0 + 1))
+
+
+def _grow(m: np.ndarray) -> np.ndarray:
+    """地図の印を、上下左右に1マス広げる"""
+    g = m.copy()
+    g[1:] |= m[:-1]
+    g[:-1] |= m[1:]
+    g[:, 1:] |= m[:, :-1]
+    g[:, :-1] |= m[:, 1:]
+    return g
+
+
+def _parts(m: np.ndarray, min_cells: int) -> np.ndarray:
+    """つながった印の塊に番号を付けた地図（0 = 何も無い）。min_cells マスより小さな塊（汚れ・ゴミ）は物と見なさない"""
+    h, w = m.shape
+    seen = np.zeros(m.shape, bool)
+    out = np.zeros(m.shape, np.int32)
+    n = 0
+    for y, x in zip(*np.nonzero(m)):
+        if seen[y, x]:
+            continue
+        seen[y, x] = True
+        stack, part = [(y, x)], []
+        while stack:
+            cy, cx = stack.pop()
+            part.append((cy, cx))
+            for ny, nx in ((cy - 1, cx), (cy + 1, cx), (cy, cx - 1), (cy, cx + 1)):
+                if 0 <= ny < h and 0 <= nx < w and m[ny, nx] and not seen[ny, nx]:
+                    seen[ny, nx] = True
+                    stack.append((ny, nx))
+        if len(part) >= min_cells:
+            n += 1
+            ys, xs = zip(*part)
+            out[list(ys), list(xs)] = n
+    return out
+
+
+def _grow_parts(lab: np.ndarray) -> np.ndarray:
+    """番号を付けた塊を、まわりの1マスに広げる（文字と物の間に少し隙間を空けるため）"""
+    g = lab.copy()
+    for dst, src in (((slice(1, None),), (slice(None, -1),)), ((slice(None, -1),), (slice(1, None),)),
+                     ((slice(None), slice(1, None)), (slice(None), slice(None, -1))),
+                     ((slice(None), slice(None, -1)), (slice(None), slice(1, None)))):
+        d, s = g[dst], lab[src]
+        m = (d == 0) & (s > 0)
+        d[m] = s[m]
+    return g
+
+
+MIN_PART = 30      # 物と見なす塊の大きさ（地図のマス。1マス = 8×8 ピクセル）
+TOUCH_W = 0.3      # 文字が物に触れる（重なる・近すぎる）ときの、物1つあたりの減点の上限
+TOUCH_N = 100      # 1つの物に触れるマスがこれだけあると、減点が上限になる。少しでも触れると大きめに減点する（平方根）
+
+
+class Keep:
+    """文字で隠してはいけない所の地図（160×90）。3つの層で持つ:
+    obj  = 物そのもの（主役の枠の中の、輪郭の多い所: ペン・表示・ロゴ。隠してはいけない枠 keeps と、切り抜けた主役の形も）
+    base = 主役の枠全体（平らな所: 箱の面・はかりの台なども含む）
+    part = 物ごとに番号を付けた地図（物のまわり1マスも含む。小さな汚れは除く）。文字が少しでも触れたら、触れた物ごとに減点する
+           （ペンの端に見出しがかかる、などを避ける。ペンとはかりの両方に触れるより、片方だけの方がよい）
+    枠が大きくても、細いペンなどの物を隠すことを重く見る（枠の大部分が平らな所でも、物の上には文字を置かない）"""
+
+    def __init__(self, obj, base, part=None):
+        self.obj = np.asarray(obj, np.float32)
+        self.base = np.asarray(base, np.float32)
+        self.part = np.asarray(part, np.int32) if part is not None else np.zeros(self.base.shape, np.int32)
+        self.t_obj, self.t_base = float(self.obj.sum()), float(self.base.sum())
+
+    def __bool__(self) -> bool:
+        return self.t_base > 1e-6 or self.t_obj > 1e-6
+
+    @classmethod
+    def build(cls, img: Image.Image, subject, keeps=(), cut=None) -> "Keep":
+        obj = np.zeros((90, 160), np.float32)
+        base = np.zeros((90, 160), np.float32)
+        if subject:
+            det = _detail(img)
+            x0, y0, x1, y1 = _cell(subject)
+            base[y0:y1, x0:x1] = 1.0
+            obj[y0:y1, x0:x1] = _grow(det[y0:y1, x0:x1] > 0.3)   # 1マス広げて、物の輪郭の内側（平らな面）も物に含める
+        part = _parts(obj > 0.5, MIN_PART)
+        n = int(part.max())
+        for b in keeps or ():   # 隠してはいけない枠は、1つずつ別の物
+            if b:
+                x0, y0, x1, y1 = _cell(b)
+                obj[y0:y1, x0:x1] = 1.0
+                base[y0:y1, x0:x1] = 1.0
+                n += 1
+                part[y0:y1, x0:x1] = n
+        if cut is not None:     # 切り抜けた主役の形（ほかの物に入っていない所）も、1つの物
+            c = Image.fromarray(np.clip(np.asarray(cut) * 255, 0, 255).astype(np.uint8)).resize((160, 90), Image.BILINEAR)
+            c = np.asarray(c, np.float32) / 255
+            obj, base = np.maximum(obj, c), np.maximum(base, c)
+            part[(c > 0.5) & (part == 0)] = n + 1
+        return cls(obj, base, _grow_parts(part))
+
+    def hide(self, boxes) -> float:
+        """文字（字ごとの枠のリスト）が、大事な所をどれだけ隠すか（0〜1.5）。
+        物を隠す割合を重く（3/4）、枠全体を隠す割合を軽く（1/4）見る。物が見つからなければ、枠を隠す割合だけ"""
+        if not self:
+            return 0.0
+        cover = _cover(self.base.shape, boxes)
+        fb = float(self.base[cover].sum()) / self.t_base if self.t_base > 1e-6 else 0.0
+        if self.t_obj <= 1e-6:
+            return 1.5 * fb
+        return 1.5 * (0.75 * float(self.obj[cover].sum()) / self.t_obj + 0.25 * fb)
+
+    def touch(self, boxes) -> float:
+        """文字（字ごとの枠のリスト）が物に触れる度合いの減点。触れた物ごとに 0〜TOUCH_W を足す。置き場所を選ぶときだけ使う。
+        隠す割合（hide）は物全体に対する割合なので、ペンの端に少しかかるくらいでは小さい。それも避けるための減点"""
+        labs = self.part[_cover(self.part.shape, boxes)]
+        labs = labs[labs > 0]
+        if not labs.size:
+            return 0.0
+        counts = np.bincount(labs)
+        counts = counts[counts > 0]
+        return TOUCH_W * float(np.sqrt(np.minimum(1.0, counts / TOUCH_N)).sum())
+
+    def most(self, boxes) -> float:
+        """文字（字ごとの枠のリスト）が、1つの物をいちばん多く隠す割合（0〜1。物ごとに、隠すマス ÷ 物のマス）"""
+        if not self.part.any():
+            return 0.0
+        n = int(self.part.max()) + 1
+        whole = np.bincount(self.part.ravel(), minlength=n)
+        hid = np.bincount(self.part[_cover(self.part.shape, boxes)], minlength=n)
+        return float((hid[1:] / np.maximum(whole[1:], 1)).max())
+
+    def lost(self, x0: float, y0: float, cw: float, ch: float) -> float:
+        """写真を (x0, y0, cw, ch) で切り出すと、物（無ければ主役の枠）のどれだけが切れて見えなくなるか（0〜1）"""
+        m, t = (self.obj, self.t_obj) if self.t_obj > 1e-6 else (self.base, self.t_base)
+        if t <= 1e-6:
+            return 0.0
+        a, b, c, d = int(x0 / 8), int(y0 / 8), int((x0 + cw) / 8), int((y0 + ch) / 8)
+        return max(0.0, 1.0 - float(m[b:d, a:c].sum()) / t)
+
+    def moved(self, x0: float, y0: float, cw: float, ch: float) -> "Keep":
+        """写真を (x0, y0, cw, ch) で切り出して広げたときの地図"""
+        box = (int(x0 / 8), int(y0 / 8), int((x0 + cw) / 8), int((y0 + ch) / 8))
+        obj, base = (np.asarray(Image.fromarray(m).crop(box).resize((160, 90), Image.BILINEAR)) for m in (self.obj, self.base))
+        part = np.asarray(Image.fromarray(self.part).crop(box).resize((160, 90), Image.NEAREST))
+        return Keep(obj, base, part)
+
+
+def _cover(shape, boxes) -> np.ndarray:
+    """字ごとの枠のリストが覆う、地図のマス"""
+    cover = np.zeros(shape, bool)
+    for b in boxes:
+        if b:
+            x0, y0, x1, y1 = _cell(b)
+            cover[y0:y1, x0:x1] = True
+    return cover
+
+
+def _busy_boxes(det: np.ndarray, boxes) -> float:
+    """字ごとの枠の下の、写真の細かさ（面積で平均）"""
+    cover = _cover(det.shape, boxes)
+    return float(det[cover].mean()) if cover.any() else 0.0
+
+
+def _ink_boxes(pos, font, st: dict, extra=()) -> list:
+    """写真を隠す枠: 字ごとの枠（ふち・影の幅を足す）と、見出しなどの枠。
+    シンプル（文字の後ろに半透明の板を敷く）は、字ごとではなく板全体（_draw_styled と同じ大きさ）"""
+    size = font.size
+    gl = _glyphs(pos, font)
+    if st.get("effect") == "panel" and gl:
+        px, py = size * 0.35, size * 0.22
+        boxes = [(min(b[0] for b in gl) - px, min(b[1] for b in gl) - py, max(b[2] for b in gl) + px,
+                  max(b[3] for b in gl) + py)]
+    else:
+        g = size * _ink(st)
+        boxes = [(b[0] - g, b[1] - g, b[2] + g, b[3] + g) for b in gl]
+    return boxes + [e for e in extra if e]
+
+
+SCALES = (1.0, 0.86, 0.74)   # 大事な所を隠さないために、文字を小さくしてみる倍率
+SHRINK_COST = 1.0            # 小さくした分の減点（1 - 倍率 に掛ける）。隠す度合いがこれより大きく減るときだけ小さくする
+POOR_HIDE = 0.4              # これより大事な所を隠すデザインは、ほかのデザインに替える（AIにデザインを任せるとき）
+POOR_MOST = 0.3              # 1つの物（ペン・表示など）をこれより多く隠すデザインも、ほかのデザインに替える
+
+
+def _side_place(img, keep, blocks, position, margin, hide_w=1.0):
+    """横に文字・縦書き: 文字を置く側（左右）・上下の位置・大きさと、写真の切り出し (x0, y0, 幅, 高さ)。
+    blocks: 大きさごとの (幅, 高さ, 字の枠を返す関数 f(側, tx, ty), 小さくした分の減点)。
+    (側, y, 切り出し, 何番目の大きさか, 隠す度合い, 1つの物を隠す割合) を返す。
+    写真は少し大きくして切り出す（左右の端に黒い帯を作らない）。切り出す所は、左右・上下の寄せ方を何通りか試す。
+    基本は写真の中身を文字の反対側へ寄せる（右に文字なら、写真の右寄りを切り出すと中身が左へ動く）。
+    大事な所を隠さない・物に触れない・物が切れない置き方を優先し、次に写真の細かさの少ない所。
+    右に置くときは、右下の再生時間の表示にかからない高さにする"""
     cw, ch = int(W * 0.86), int(H * 0.86)
+    views = []
+    for x0 in (0, W - cw):
+        for y0 in (0, (H - ch) // 2, H - ch):
+            det = _detail(img.crop((x0, y0, x0 + cw, y0 + ch)).resize((W, H)))
+            kp = keep.moved(x0, y0, cw, ch) if keep else None
+            views.append(((x0, y0, cw, ch), det, kp, 1.5 * keep.lost(x0, y0, cw, ch) if keep else 0.0))
     cands = []
     for side in ("left", "right"):
-        x0 = W - cw if side == "left" else 0
-        det = _detail(img.crop((x0, 0, x0 + cw, ch)).resize((W, H)))
-        subj = _moved(subject, x0, 0, cw, ch)
-        tx = margin if side == "left" else W - margin - bw
-        for v in ("center", "top", "bottom"):
-            ty = (H - bh) / 2 if v == "center" else (56.0 if v == "top" else H - bh - 56.0)
-            box = (tx, ty, tx + bw, ty + bh)
-            sc = _busy(det, box) + hide_w * _hide(subj, box) + 0.03 * (v != "center")
-            if position == side:
-                sc *= 0.7
-            cands.append((sc, side, v, ty))
-    _, side, _v, y = min(cands)
-    return side, y, (W - cw if side == "left" else 0, 0, cw, ch)
+        for crop, det, kp, lost in views:
+            usual = crop[0] == (W - cw if side == "right" else 0) and crop[1] == 0
+            extra = lost + (0.0 if usual else 0.03)
+            for k, (bw, bh, boxes_at, cost) in enumerate(blocks):
+                tx = margin if side == "left" else W - margin - bw
+                top, bottom = 48.0, H - bh - 48.0
+                if side == "right":
+                    bottom = min(bottom, TIME_BOX[1] - TIME_GAP - bh)
+                bottom = max(bottom, top)
+                for j in range(7):   # 上から下まで7か所。真ん中を少しひいきする
+                    ty = top + (bottom - top) * j / 6
+                    boxes = boxes_at(side, tx, ty)
+                    hide = hide_w * kp.hide(boxes) if kp else 0.0
+                    near = hide_w * kp.touch(boxes) if kp else 0.0
+                    sc = _busy_boxes(det, boxes) + hide + near + cost + extra + 0.03 * abs(j - 3) / 3 \
+                        + 5.0 * any(time_hit(b) for b in boxes)
+                    if position == side:
+                        sc *= 0.7
+                    cands.append((sc, side, k, ty, hide, crop, kp, boxes))
+    _, side, k, y, hide, crop, kp, boxes = min(cands, key=lambda c: c[0])
+    return side, y, crop, k, hide, (hide_w * kp.most(boxes) if kp else 0.0)
 
 
 def compose(frame: Image.Image, text: str, layout: str, tpl: Template, font: tuple[str, int],
-            label: str = "", position: str = "auto", subject=None, design: dict | None = None) -> Image.Image:
+            label: str = "", position: str = "auto", subject=None, design: dict | None = None,
+            keeps=None) -> Image.Image:
     """1枚のサムネイル（1280×720）。
 
     layout: bottom=大きな文字（上か下）/ band=帯（上か下）/ side=横に文字（左か右・上中下）/ vertical=縦書き（左か右）
     position: 文字を置く側の希望（AIが選んだ top/bottom/left/right。auto なら写真の空いている側）
     label: 大きな文字に添える小さな見出し（商品名など。空なら付けない）
-    subject: 文字で隠してはいけない大事な所の枠（1280×720 の座標。subject_px で作る）。いちばん隠さない置き方にする
-    design: AIが決めたデザイン {emphasis: 強調する言葉, badge: バッジの言葉, effect: none/focus/sticker/depth}（rc_thumbart）
+    subject: 主役・大事な所をまとめて囲む枠（1280×720 の座標。subject_px で作る）。枠の中の細かい所ほど隠さない
+    design: AIが決めたデザイン {emphasis: 強調する言葉, badge: バッジの言葉, effect: none/focus/sticker/depth,
+            shade: 文字の後ろを暗くする強さ light/normal/strong}（rc_thumbart）
+    keeps: ほかに隠してはいけない小さな所の枠のリスト（はかりの表示・ロゴ・顔など）
+    返す画像の info["hide"] に、文字（帯）が大事な所を隠す度合い（0〜1.5）、
+    info["most"] に、1つの物（ペン・表示など）をいちばん多く隠す割合（0〜1）を入れる
     """
     import rc_thumbart as A
     st = text_style(tpl)
@@ -890,6 +1294,11 @@ def compose(frame: Image.Image, text: str, layout: str, tpl: Template, font: tup
     emph, effect = dz["emphasis"], dz["effect"]
     cut = A.cutout(img, subject) if effect != "none" else None   # 主役の切り抜き（切れなければ None）
     hide_w = 0.5 if effect == "depth" and cut is not None else 1.0   # 文字を主役の後ろに回すなら、少し重なってよい
+    keep = Keep.build(img, subject, keeps, cut)
+    if effect != "none":   # 写真の効果でまわりを暗くするときは、文字の下のグラデーションと四隅の暗さを控えめに（暗くなりすぎない）
+        st = {**st, "vignette": float(st.get("vignette", 0)) * 0.5, "shade": int(st.get("shade", 150) * 0.7)}
+    if dz["shade"] == "light":   # 明るく: 四隅の暗さも弱める
+        st = {**st, "vignette": float(st.get("vignette", 0)) * 0.5}
 
     def prepare(im, crop=None):
         """写真の補正と効果。crop = 切り出して広げるとき。(写真, 主役の切り抜き, 大事な所の枠) を返す"""
@@ -899,28 +1308,56 @@ def compose(frame: Image.Image, text: str, layout: str, tpl: Template, font: tup
             c, s = A.crop_alpha(cut, crop), _moved(subject, *crop)
         return A.apply_effect(_grade(im, st), effect, c, s, st), c, s
 
+    def sized(f0, size0, s):
+        return f0 if s == 1 else _font(fp, idx, max(36, int(size0 * s)))
+
     if layout in ("side", "vertical"):
+        blocks = []
         if layout == "side":
             lines = _lines(text, one_line_max=4)
             room = H - 160 - (int(LABEL_MIN * 1.75) if label and st.get("show_label", True) else 0)
-            f, size = _fit(fp, idx, lines, int(W * 0.5), room, start=200, pad=pad, emphasis=emph)
-            lab = _label_fit(label, fp, idx, size, int(W * 0.6), st)
-            bw, bh = _block(lines, f, size, lab, st, emph)
-        else:   # 縦書き: 右の列から。見出しは大きな文字の右に、縦に小さく
+            f0, size0 = _fit(fp, idx, lines, int(W * 0.5), room, start=200, pad=pad, emphasis=emph)
+            for s in SCALES:
+                f = sized(f0, size0, s)
+                lab = _label_fit(label, fp, idx, f.size, int(W * 0.6), st)
+                bw, bh = _block(lines, f, f.size, lab, st, emph)
+
+                def boxes_at(side, tx, ty, f=f, lab=lab, bw=bw):
+                    x, a = (tx, "left") if side == "left" else (tx + bw, "right")
+                    pos = _text_pos(lines, f, f.size, x, ty + _label_h(lab, st), a, emph)
+                    return _ink_boxes(pos, f, st, [_label_box(lab, x, ty, a)])
+                blocks.append((bw, bh, boxes_at, SHRINK_COST * (1 - s), (f, lab, None, 0)))
+        else:   # 縦書き: 右の列から。見出しは大きな文字の右に、縦に小さく。右に置いても再生時間の表示にかからない長さ
             lines = _lines(text, one_line_max=6)
-            vl = A.vlabel_fit(label, fp, idx, st, H - 120)
+            vmax = TIME_BOX[1] - TIME_GAP - 44
+            vl = A.vlabel_fit(label, fp, idx, st, vmax)
             lw = vl[0].size * 1.6 if vl else 0
-            f, size = A.vfit(fp, idx, lines, int(W * 0.44) - lw, H - 120, emph, pad=pad)
-            tw, th = A.vpos(lines, f, size, 0, 0, emph)[1]
-            bw, bh = tw + lw, max(th, A.vlabel_h(vl))
-        side, y, crop = _side_place(img, subject, bw, bh, position, margin, hide_w)
+            f0, size0 = A.vfit(fp, idx, lines, int(W * 0.44) - lw, vmax, emph, pad=pad)
+            for s in SCALES:
+                f = sized(f0, size0, s)
+                tw, th = A.vpos(lines, f, f.size, 0, 0, emph)[1]
+                bw, bh = tw + lw, max(th, A.vlabel_h(vl))
+
+                def boxes_at(side, tx, ty, f=f, bw=bw):
+                    pos = A.vpos(lines, f, f.size, tx + bw - lw, ty, emph)[0]
+                    lb = (tx + bw - lw, ty, tx + bw, ty + A.vlabel_h(vl)) if vl else None
+                    return _ink_boxes(pos, f, st, [lb])
+                blocks.append((bw, bh, boxes_at, SHRINK_COST * (1 - s), (f, None, vl, lw)))
+        side, y, crop, k, hide, most = _side_place(img, keep, [b[:4] for b in blocks], position, margin, hide_w)
+        bw, bh, _, _, (f, lab, vl, lw) = blocks[k]
+        size = f.size
         img, cut, subj = prepare(img, crop)
         base = img.copy()
         accent = _accent(img, st)
-        _shade(img, side, 0.7, max(st.get("shade", 150), 120))
         st = {**st, "_accent": accent}
         tx = margin if side == "left" else W - margin - bw
         tbox = (tx, y, tx + bw, y + bh)
+        # 文字を置いた側の端から、文字の向こう側までを縦いっぱいに暗くする（画面の右半分など）
+        strength = _shade_need(img, tbox, max(st.get("shade", 150), 120 if effect == "none" else 90), dz["shade"])
+        if side == "left":
+            _shade(img, "x", 0, tx + bw + 30, strength, "left")
+        else:
+            _shade(img, "x", tx - 30, W, strength, "right")
         if layout == "side":
             x, align = (margin, "left") if side == "left" else (W - margin, "right")
             lbox = _label_box(lab, x, y, align)
@@ -933,19 +1370,22 @@ def compose(frame: Image.Image, text: str, layout: str, tpl: Template, font: tup
         _draw_styled(img, lines, f, size, 0, 0, "left", st, emph, pos=tpos)
 
     elif layout == "band":
-        # 帯を、写真の細かい所を隠しにくい側（上か下）に置く。帯の色は写真から取る（上品・シンプルは深い色）
+        # 帯を、大事な所・写真の細かい所を隠しにくい側（上か下）に置く。帯の色は写真から取る（上品・シンプルは深い色）
         img, cut, subj = prepare(img)
         base = img.copy()
         det = _detail(img)
         # 見出しは帯の中で読める大きさ（LABEL_MIN）にし、その分だけ帯を少し太くする
         lab = _label_fit(label, fp, idx, int(LABEL_MIN / 0.42) + 1, W - 2 * margin, st)
         band_h = int(H * (0.38 if lab else 0.34))
-        score = {"top": _busy(det, (0, 0, W, band_h)) + hide_w * _hide(subj, (0, 0, W, band_h)),
-                 "bottom": _busy(det, (0, H - band_h, W, H)) + hide_w * _hide(subj, (0, H - band_h, W, H))}
+        hides = {"top": hide_w * keep.hide([(0, 0, W, band_h)]), "bottom": hide_w * keep.hide([(0, H - band_h, W, H)])}
+        score = {"top": _busy(det, (0, 0, W, band_h)) + hides["top"],
+                 "bottom": _busy(det, (0, H - band_h, W, H)) + hides["bottom"]}
         if position in score:
             score[position] *= 0.7
         side = min(score, key=score.get)
+        hide = hides[side]
         y0 = 0 if side == "top" else H - band_h
+        most = hide_w * keep.most([(0, y0, W, y0 + band_h)])
         pop = st["effect"] == "outline"
         color = _accent(img, st if pop else {**st, "accent_color": "auto"})
         band = Image.new("L", (W, H), 0)
@@ -966,15 +1406,35 @@ def compose(frame: Image.Image, text: str, layout: str, tpl: Template, font: tup
             ImageDraw.Draw(line).rectangle([0, ly, W, ly + 3], fill=255)
             _paint(img, gold, line)
         room = band_h - 36 - _label_h(lab, st)
-        # 1行に収まるなら1行で大きく。収まらなければ2行
-        one = [_lines(text)[0] + (_lines(text)[1] if len(_lines(text)) > 1 else "")]
-        f, size = _fit(fp, idx, one, W - 2 * margin, room, start=150, pad=pad, emphasis=emph)
-        lines = one
-        if size < 84:
-            lines = _lines(text)
-            f, size = _fit(fp, idx, lines, W - 2 * margin, room, start=150, pad=pad, emphasis=emph)
-        bw, bh = _block(lines, f, size, lab, st, emph)
-        y = y0 + (band_h - bh) / 2 - size * 0.04
+        # 1行に収まるなら1行で大きく。収まらなければ2行。
+        # 帯が下なら、右下の再生時間の表示にかからないようにする（少し左に寄せる。寄せきれなければ、左の空きに収まる大きさ）
+        two = _lines(text)
+        one = ["".join(two)]
+        free = TIME_BOX[0] - TIME_GAP - margin
+        tries = [(one, W - 2 * margin, W / 2), (one, free, margin + free / 2), (two, W - 2 * margin, W / 2),
+                 (two, free, margin + free / 2)]
+        if side == "top":
+            tries = [tries[0], tries[2]]
+        for k, (lines, max_w, cx) in enumerate(tries):
+            f, size = _fit(fp, idx, lines, max_w, room, start=150, pad=pad, emphasis=emph)
+            last = k == len(tries) - 1
+            if lines is one and size < 84 and len(two) > 1 and not last:
+                continue
+            bw, bh = _block(lines, f, size, lab, st, emph)
+            # 見た目の字（見出しの字の上から、大きな文字の下まで）が帯の真ん中に来るようにする
+            # （明朝体などは字の上の余白が大きく、計算上の高さで真ん中にすると下に寄って見える）
+            y = y0 + (band_h - bh) / 2
+            gl = _glyphs(_text_pos(lines, f, size, cx, y + _label_h(lab, st), "center", emph), f)
+            ink_top = y + lab[0].getbbox(lab[1])[1] if lab else min(b[1] for b in gl)
+            ink_bottom = max(b[3] for b in gl)
+            mid = y0 + band_h / 2 + (-6 if (pop and side == "bottom") else 6 if pop else 0)   # ポップは斜めの端の分
+            y += mid - (ink_top + ink_bottom) / 2
+            if side == "bottom":
+                cx -= _time_shift(_text_pos(lines, f, size, cx, y + _label_h(lab, st), "center", emph), f,
+                                  size * _ink(st))
+                if cx - bw / 2 < margin * 0.5 and not last:
+                    continue
+            break
         if pop:   # ポップ: 白い文字に濃いふち1本（帯の上では外側の白いふちは付けない）。見出しは濃い色の札。強調は黄色
             bst = {**st, "text_color": "#FFFFFF", "outer_color": "", "_accent": None, "emphasis_color": st["text_color"]}
             tag = (17, 17, 17)
@@ -982,35 +1442,63 @@ def compose(frame: Image.Image, text: str, layout: str, tpl: Template, font: tup
             bst = {**st, "effect": "shadow", "_accent": None}
             tag = gold or _hex(st["text_color"])
         accent = gold or color
-        tbox = (W / 2 - bw / 2, y, W / 2 + bw / 2, y + bh)
-        lbox = _label_box(lab, W / 2, y, "center")
-        y += _draw_label(img, lab, W / 2, y, "center", bst, tag)
-        tpos = _text_pos(lines, f, size, W / 2, y, "center", emph)
-        _draw_styled(img, lines, f, size, W / 2, y, "center", bst, emph, pos=tpos)
+        tbox = (cx - bw / 2, y, cx + bw / 2, y + bh)
+        lbox = _label_box(lab, cx, y, "center")
+        y += _draw_label(img, lab, cx, y, "center", bst, tag)
+        tpos = _text_pos(lines, f, size, cx, y, "center", emph)
+        _draw_styled(img, lines, f, size, cx, y, "center", bst, emph, pos=tpos)
 
-    else:  # bottom: 大きな文字を、写真の空いている側（上か下）に
+    else:  # bottom: 大きな文字を、写真の空いている側（上か下）に。大事な所を隠すなら、少し小さくしてみる
         img, cut, subj = prepare(img)
         base = img.copy()
         accent = _accent(img, st)
         det = _detail(img)
         lines = _lines(text)
-        f, size = _fit(fp, idx, lines, W - 2 * margin, int(H * 0.5), pad=pad, emphasis=emph)
-        lab = _label_fit(label, fp, idx, size, W - 2 * margin, st)
-        bw, bh = _block(lines, f, size, lab, st, emph)
+        f0, size0 = _fit(fp, idx, lines, W - 2 * margin, int(H * 0.5), pad=pad, emphasis=emph)
         align = st.get("align", "center")
         cands = []
-        for v in ("bottom", "top"):
-            y = H - bh - 48 if v == "bottom" else 44
-            for a in (("center", "left", "right") if align == "center" else ("left", "right")):
-                x0 = (W - bw) / 2 if a == "center" else (margin if a == "left" else W - margin - bw)
-                # 中央寄せの見せ方は、中央を少しひいきする（左右に寄せるのは、中央が写真の大事な所と重なるとき）
-                bias = 0.04 * (v == "top") + 0.02 * (a == "right") + 0.02 * (align == "center" and a != "center")
-                sc = _busy(det, (x0, y, x0 + bw, y + bh)) + hide_w * _hide(subj, (x0, y, x0 + bw, y + bh)) + bias
-                if position == v:
-                    sc *= 0.7
-                cands.append((sc, v, a, y, x0))
-        _, v, a, y, x0 = min(cands)
-        _shade(img, v, 0.62, st.get("shade", 150))
+        for s in SCALES:
+            f = sized(f0, size0, s)
+            size = f.size
+            lab = _label_fit(label, fp, idx, size, W - 2 * margin, st)
+            bw, bh = _block(lines, f, size, lab, st, emph)
+            grow = size * _ink(st)
+            # 上か下に置くのが基本。上も下も大事な所にかかるときのために、間の高さ（middle）も少し不利にして比べる
+            heights = [("top", 44.0)] + [("middle", 44 + (H - bh - 92) * j / 8) for j in range(1, 8)] \
+                + [("bottom", H - bh - 48.0)]
+            for v, y_base in heights:
+                for a in (("center", "left", "right") if align == "center" else ("left", "right")):
+                    x0 = (W - bw) / 2 if a == "center" else (margin if a == "left" else W - margin - bw)
+                    x = W / 2 if a == "center" else (margin if a == "left" else W - margin)
+                    y = y_base
+                    if v != "top":   # 右下の再生時間の表示にかかるなら、その分だけ上げる
+                        y -= _time_lift(_text_pos(lines, f, size, x, y + _label_h(lab, st), a, emph), f, grow)
+                    boxes = _ink_boxes(_text_pos(lines, f, size, x, y + _label_h(lab, st), a, emph), f, st,
+                                       [_label_box(lab, x, y, a)])
+                    # 中央寄せの見せ方は、中央を少しひいきする（左右に寄せるのは、中央が写真の大事な所と重なるとき）
+                    bias = 0.04 * (v == "top") + 0.08 * (v == "middle") + 0.02 * (a == "right") \
+                        + 0.02 * (align == "center" and a != "center")
+                    hide = hide_w * keep.hide(boxes)
+                    sc = _busy_boxes(det, boxes) + hide + hide_w * keep.touch(boxes) + bias + SHRINK_COST * (1 - s)
+                    if position == v:
+                        sc *= 0.7
+                    cands.append((sc, v, a, y, x0, f, lab, bw, bh, hide, boxes))
+        _, v, a, y, x0, f, lab, bw, bh, hide, boxes = min(cands, key=lambda c: c[0])
+        most = hide_w * keep.most(boxes)
+        size = f.size
+        # 文字の後ろを、画面の幅（高さ）いっぱいに暗くする。上か下なら、その端から文字の向こう側まで（画面の下半分など）。
+        # 間の高さなら、左右に寄せた文字はその側の端から（画面の右半分など）、真ん中の文字は横いっぱいの帯で
+        strength = _shade_need(img, (x0, y, x0 + bw, y + bh), st.get("shade", 150), dz["shade"])
+        if v == "top":
+            _shade(img, "y", 0, y + bh + 24, strength, "top")
+        elif v == "bottom":
+            _shade(img, "y", y - 24, H, strength, "bottom")
+        elif a == "left":
+            _shade(img, "x", 0, x0 + bw + 30, strength, "left")
+        elif a == "right":
+            _shade(img, "x", x0 - 30, W, strength, "right")
+        else:
+            _shade(img, "y", y - 24, y + bh + 24, strength)
         x = W / 2 if a == "center" else (margin if a == "left" else W - margin)
         st = {**st, "_accent": accent}
         tbox = (x0, y, x0 + bw, y + bh)
@@ -1021,7 +1509,10 @@ def compose(frame: Image.Image, text: str, layout: str, tpl: Template, font: tup
     # 文字を主役の後ろに回す（大きな文字が1字でも隠れすぎる・小さな見出しが少しでも隠れるなら回さない）・バッジ
     glyphs = _glyphs(tpos, f) if effect == "depth" else None
     img = A.finish(img, base, cut, subj, dz, st, accent, tbox, fp, idx, glyphs, lbox)
-    return img.filter(ImageFilter.UnsharpMask(radius=1.2, percent=50, threshold=2))
+    out = img.filter(ImageFilter.UnsharpMask(radius=1.2, percent=50, threshold=2))
+    out.info["hide"] = round(float(hide), 3)
+    out.info["most"] = round(float(most), 3)
+    return out
 
 
 def _pro(tpl: Template):
@@ -1044,10 +1535,39 @@ def save_jpeg(img: Image.Image, path: Path):
 
 # ---------------- まとめ ----------------
 
-def generate(out_dir: Path, tpl: Template, llm: str = "api", effort: str | None = None,
-             custom_text: str | None = None) -> list[Path]:
-    """サムネイル案を作る。effort: AIの考える深さ（None ならテンプレートの [thumbnail] の effort。初期値 high）"""
+def _compose_set(frame, p: dict, lays: list[str], tpl, font, design: dict, keeps, swap: bool):
+    """1枚の写真から、デザイン（lays）ごとのサムネイル [(デザイン, 画像)]。
+    swap=True（AIにデザインを任せるとき）なら、文字や帯が大事な所を隠しすぎるデザインは、まだ使っていないデザインに替える"""
     import rc_thumbart as A
+
+    def make(lay):
+        return compose(frame, p["text"], lay, tpl, font, p.get("label", ""), p.get("text_position", "auto"),
+                       subject_px(p.get("subject_box")), design, keeps)
+    if not swap:
+        return [(lay, make(lay)) for lay in lays]
+    good, poor = [], []
+    for lay in lays + [x for x in A.LAYOUTS if x not in lays]:
+        if len(good) >= len(lays):
+            break
+        img = make(lay)
+        ok = img.info.get("hide", 0) <= POOR_HIDE and img.info.get("most", 0) <= POOR_MOST
+        (good if ok else poor).append((lay, img))
+    good += sorted(poor, key=lambda m: m[1].info.get("hide", 0) + m[1].info.get("most", 0))[:len(lays) - len(good)]
+    order = {}   # AIが選んだ順、替えたものはその後ろ（デザインの決まった順）
+    for k, lay in enumerate(lays + list(A.LAYOUTS)):
+        order.setdefault(lay, k)
+    return sorted(good, key=lambda m: order[m[0]])
+
+
+def generate(out_dir: Path, tpl: Template, llm: str = "api", effort: str | None = None,
+             custom_text: str | None = None, request: str = "") -> list[Path]:
+    """サムネイル案を作る。effort: AIの考える深さ（None ならテンプレートの [thumbnail] の effort。初期値 high）。
+    request: 今のサムネイル案を見て、AIに指示して作り直す（「案2は文字を左に」「もっと明るく」など。llm="api" のとき）"""
+    import rc_thumbart as A
+    request = " ".join((request or "").split())
+    if request and llm != "api":
+        print("  [注意] AIへの指示は、AIを「Claude APIで自動」にしたときだけ使えます（指示なしで作ります）")
+        request = ""
     effort = effort if effort in EFFORTS else thumb_effort(tpl)
     art = art_director(tpl)
     sess = json.loads((out_dir / "session.json").read_text(encoding="utf-8"))
@@ -1069,6 +1589,7 @@ def generate(out_dir: Path, tpl: Template, llm: str = "api", effort: str | None 
     tl = rc_speedup.wrap(tl, plan)   # 早送りがあれば、完成動画の時刻で均等に候補を選ぶ
     tdir = out_dir / "thumbnails"
     work = tdir / "_candidates"
+    prev = _previous(tdir) if request else None   # 前回の案（画像は消す前に読み込む）
     print("■ サムネイル案")
     print("  候補の場面を取り出しています…", flush=True)
     pro = _pro(tpl)   # 顔で選ぶ・人物の切り抜き（rc_thumbspro。使えなければ None）
@@ -1079,18 +1600,24 @@ def generate(out_dir: Path, tpl: Template, llm: str = "api", effort: str | None 
     if pro:
         cands = pro.annotate(cands)
 
-    usage = None
-    if llm == "api" and not custom_text:
+    usage, asked = None, False
+    if llm == "api" and (request or not custom_text):
+        if request:
+            print(f"  Claudeが指示に合わせて作り直しています（指示: {request}）…", flush=True)
         print(f"  Claudeが候補{len(cands)}枚から選んでいます（考える深さ: {effort}"
               f"{'・デザインもおまかせ' if art else ''}）…", flush=True)
         try:
             picks, usage = pick_with_ai(cands, title, ideas, sess.get("mode", "talk"), effort,
-                                        text_style(tpl)["label"], art)
+                                        text_style(tpl)["label"], art, request, prev)
         except Exception as e:  # noqa: BLE001
             print(f"  [注意] AIでの選択に失敗したので、自動で選びます: {e}")
             picks = []
+        asked = bool(picks)
         if not picks:
             picks = pick_simple(cands, ideas, title)
+        if custom_text:
+            for p in picks:
+                p["text"] = custom_text
     else:
         picks = pick_simple(cands, [custom_text] if custom_text else ideas, title)
         if custom_text:
@@ -1114,18 +1641,30 @@ def generate(out_dir: Path, tpl: Template, llm: str = "api", effort: str | None 
                                     p["text"], p.get("label", ""))
             if p.get("layouts"):
                 lays = A.pick_layouts(p["layouts"], lays)
-        for lay in lays:
+        keeps = [b for b in (subject_px(x) for x in (p.get("keep_boxes") or [])[:3]) if b]
+        made = _compose_set(frame, p, lays, tpl, font, design, keeps, swap=art)
+        lays = [lay for lay, _img in made]
+        for lay, img in made:
             path = tdir / f"thumb_{i}_{lay}.jpg"
-            save_jpeg(compose(frame, p["text"], lay, tpl, font, p.get("label", ""), p.get("text_position", "auto"),
-                              subject_px(p.get("subject_box")), design), path)
+            save_jpeg(img, path)
             outs.append(path)
         outs += pouts
         info.append({"image": i, "text": p["text"], "label": p.get("label", ""),
                      "text_position": p.get("text_position", "any"), "subject_box": p.get("subject_box"),
-                     **({k: design.get(k, "") for k in ("emphasis", "badge", "effect")} if design else {}),
+                     **({"keep_boxes": p["keep_boxes"]} if p.get("keep_boxes") else {}),
+                     **({k: design.get(k, "") for k in ("emphasis", "badge", "effect", "shade")} if design else {}),
                      "layouts": lays, "reason": p.get("reason", ""),
                      "source_time": round(by_no[p["frame"]]["t"], 2)})
     (tdir / "thumbnails.json").write_text(json.dumps(info, ensure_ascii=False, indent=1), encoding="utf-8")
+    # 反映した指示を残す（次に指示するとき、AIが前の指示も守れるように）。指示なしで作り直したら、まっさらに戻す
+    req_file = tdir / "requests.json"
+    if request and asked:
+        hist = (prev or {}).get("history", []) + [request]
+        req_file.write_text(json.dumps(hist[-20:], ensure_ascii=False, indent=1), encoding="utf-8")
+    else:
+        if request:
+            print("  [注意] AIが使えなかったので、指示は反映していません")
+        req_file.unlink(missing_ok=True)
     print(f"  {len(outs)}枚のサムネイル案を作りました: {tdir}")
     if usage and usage["in"]:
         import rc_llm
