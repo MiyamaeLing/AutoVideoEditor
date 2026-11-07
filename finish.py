@@ -336,7 +336,8 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
     if thumbs and not preview:
         try:
             import rc_thumb
-            rc_thumb.generate(out_dir, tpl, thumb_llm(llm), effort)
+            # サムネイルのAIの考える深さは、テンプレートの [thumbnail] の effort（動画作成の設定とは別。初期値 high）
+            rc_thumb.generate(out_dir, tpl, thumb_llm(llm))
         except (Exception, SystemExit) as e:  # noqa: BLE001  サムネイルの失敗で全体を止めない
             print(f"  [注意] サムネイル案を作れませんでした: {e}")
 

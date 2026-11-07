@@ -44,6 +44,7 @@ SAMPLE_TELOPS = {"emphasis": "重さ わずか1.2kg！", "info": "マキタ DF03
                  "funny": "いや軽すぎ！"}
 SAMPLE_CHAPTER = "実際に使ってみた"
 SAMPLE_THUMB = "軽すぎて\n笑った"
+SAMPLE_THUMB_DESIGN = {"emphasis": "軽すぎ", "badge": "検証", "effect": "none"}   # デザインもAIに任せるときの見本
 PANEL_W, PANEL_H = 960, 540
 
 
@@ -323,7 +324,11 @@ KEY_NOTES = {
     "thumbnail.text_color": "文字の色（空なら見せ方の色）", "thumbnail.outline_color": "文字の縁取り・影の色（空なら見せ方の色）",
     "thumbnail.outer_color": "ポップの外側の縁取り（空なら見せ方の色）",
     "thumbnail.accent_color": "帯・線・見出しの札の色（auto = 写真から選ぶ。空なら見せ方の色）",
-    "thumbnail.layouts": "bottom=下に大きな文字 / band=上に帯 / side=横に文字",
+    "thumbnail.layouts": "bottom=下に大きな文字 / band=上に帯 / side=横に文字 / vertical=縦書き",
+    "thumbnail.emphasis_color": "強調する言葉の色（空なら見せ方の色）",
+    "thumbnail.badge_color": "バッジ（「限定」などの札）の色（空なら見せ方の色）",
+    "thumbnail.art_director": "強調する言葉・バッジ・写真の効果・見せ方の組み合わせもAIが決める（true / false）",
+    "thumbnail.effort": "サムネイルを選ぶAIの考える深さ（high / medium / low）。動画の編集とは別",
 }
 _BARE = re.compile(r"[A-Za-z0-9_-]+")
 
@@ -580,10 +585,11 @@ def render_preview(cfg: dict, tpl_dir: Path, bg: Path | None = None, out_dir: Pa
             font = rc_thumb.find_font(tpl)
         except SystemExit:
             font = None
+        design = SAMPLE_THUMB_DESIGN if rc_thumb.art_director(tpl) else None
         for key, layout in (("thumb", "bottom"), ("thumb_band", "band")):
             dst = out_dir / f"{prefix}_{key}.png"
             if font:
-                img = rc_thumb.compose(frame, SAMPLE_THUMB, layout, tpl, font)
+                img = rc_thumb.compose(frame, SAMPLE_THUMB, layout, tpl, font, design=design)
             else:
                 img = Image.new("RGB", (rc_thumb.W, rc_thumb.H), (60, 60, 60))
             img.resize((PANEL_W, PANEL_H), Image.LANCZOS).save(dst)

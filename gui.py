@@ -878,7 +878,10 @@ class ThumbDialog(QDialog):
         rows = sorted({f.stem.split("_")[1] for f in files})
         for r, no in enumerate(rows):
             meta = next((i for i in info if str(i.get("image")) == no), {})
-            cap = QLabel(f"案{no}：「{meta.get('text', '').replace(chr(92) + 'n', ' ')}」  {meta.get('reason', '')}")
+            import rc_thumbart
+            look = rc_thumbart.describe(meta)
+            cap = QLabel(f"案{no}：「{meta.get('text', '').replace(chr(92) + 'n', ' ')}」  {meta.get('reason', '')}"
+                         + (f"\n　デザイン: {look}" if look else ""))
             cap.setStyleSheet("font-weight: bold; margin-top: 6px;")
             grid.addWidget(cap, r * 2, 0, 1, 3)
             for c, f in enumerate(sorted(tdir.glob(f"thumb_{no}_*.jpg"))):
@@ -1919,8 +1922,8 @@ class ReviewPage(QWidget):
             return
         if not text and not self.win.check_api_key(self.win.create.llm.currentData()):
             return
-        args = [str(self.out), "--template", self._template(),
-                "--llm", self.win.create.llm.currentData(), "--effort", self.win.create.effort.currentData()]
+        # AIの考える深さは、テンプレートの [thumbnail] の effort（動画作成の「AIの考える深さ」とは別）
+        args = [str(self.out), "--template", self._template(), "--llm", self.win.create.llm.currentData()]
         if text:
             args += ["--text", text]
 

@@ -121,7 +121,11 @@ outline_color = ""          # 文字の縁取り・影の色
 outer_color = ""            # ポップの外側の縁取り
 accent_color = ""           # 帯・線・見出しの札の色。"auto" = 写真から選ぶ
 label = true                # 大きな文字の上に、商品名などの小さな見出しを添える（AIで選んだとき）
-layouts = ["bottom", "band", "side"]   # bottom=大きな文字（上か下） / band=帯（上か下） / side=横に文字（左か右）。文字は写真の空いている側に置きます
+layouts = ["bottom", "band", "side"]   # bottom=大きな文字（上か下） / band=帯（上か下） / side=横に文字（左か右） / vertical=縦書き（左か右）。文字は写真の空いている側に置きます
+emphasis_color = ""         # 強調する言葉（「30g」など）の色
+badge_color = ""            # バッジ（「限定」「検証」などの札）の色
+art_director = true         # 強調する言葉・バッジ・写真の効果（主役の切り抜き・背景のぼかし）・見せ方の組み合わせもAIが決める。決めた組み合わせは layouts より優先
+effort = "high"             # サムネイルを選ぶAIの考える深さ（high / medium / low）。動画の編集の深さとは別に決められます
 
 # ---- 声を聞き取りやすくする（仕上げの書き出しで、声のトラックにかける） ----
 [audio_clean]

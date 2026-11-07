@@ -31,7 +31,8 @@ def main():
     ap.add_argument("--template", type=Path, default=DEFAULT_TEMPLATE)
     ap.add_argument("--llm", choices=["api", "manual", "none"], default="api",
                     help="api=Claudeが画像を見て選ぶ / manual・none=くっきりした見どころの場面を自動で選ぶ")
-    ap.add_argument("--effort", choices=["low", "medium", "high"], default="medium")
+    ap.add_argument("--effort", choices=["low", "medium", "high"], default=None,
+                    help="AIの考える深さ（省略するとテンプレートの [thumbnail] の effort。初期値 high）")
     ap.add_argument("--text", help="サムネイルの文字を指定する（2行にするときは \\n で区切る）")
     args = ap.parse_args()
     require_ffmpeg()

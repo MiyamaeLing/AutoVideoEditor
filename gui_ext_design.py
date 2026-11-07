@@ -35,7 +35,7 @@ MOOD_CHIPS = ["落ち着いた", "ポップ", "ガジェット系", "ナチュ�
 DEFAULTS = {"font": "BIZ UDPGothic", "size": 64, "bold": True, "color": "#FFFFFF", "outline_color": "#000000",
             "outline": 4, "shadow": 0, "margin_bottom": 56, "box_color": "#2B6CB0", "position": "top",
             "margin_v": 70, "animation": "pop", "duration": 2.5, "text_color": "#FFE14D", "outer_color": "#FFFFFF",
-            "accent_color": "#2B6CB0", "style": rc_thumb.DEFAULT_STYLE}
+            "accent_color": "#2B6CB0", "style": rc_thumb.DEFAULT_STYLE, "effort": "high"}
 
 # (キー, 画面の名前, 種類, 追加の情報)
 SPEC_CAPTION = [("font", "フォント", "font", None), ("size", "文字の大きさ", "int", (20, 200)),
@@ -55,7 +55,10 @@ SPEC_CHAPTER = [("font", "フォント", "font", None), ("size", "文字の大�
 SPEC_THUMB = [("style", "見せ方", "choice", [(k, v["label"]) for k, v in rc_thumb.STYLES.items()]),
               ("font_file", "フォント", "thumbfont", None), ("text_color", "文字の色", "color", None),
               ("outline_color", "縁取り・影の色", "color", None), ("outer_color", "外側の縁取り（ポップ）", "color", None),
-              ("accent_color", "帯・線の色", "color", None)]
+              ("accent_color", "帯・線の色", "color", None), ("emphasis_color", "強調する言葉の色", "color", None),
+              ("badge_color", "バッジの色", "color", None),
+              ("art_director", "デザインもAIに任せる", "bool", "強調する言葉・バッジ・効果・見せ方の組み合わせ"),
+              ("effort", "AIの考える深さ", "choice", [("high", "じっくり"), ("medium", "ふつう"), ("low", "速い")])]
 # (タブ名, 設定の場所, 項目, 見本のパネル)
 SECTIONS = [("字幕", ("caption",), SPEC_CAPTION, "emphasis")] + \
     [(label, ("telop", key), SPEC_TELOP, key) for key, label in rc_design.TELOPS] + \
@@ -544,7 +547,10 @@ class SectionForm(QWidget):
             self.rows[key] = (lab, wd)
         if panel == "thumb":
             n = QLabel("サムネイルは、書き出しのあとに自動で作られる案（「サムネイル」画面）に使われます。"
-                       "見せ方を変えると、色は見せ方の色に戻ります。帯・線の色が「自動」なら、写真から選びます。")
+                       "見せ方を変えると、色は見せ方の色に戻ります。帯・線の色が「自動」なら、写真から選びます。"
+                       "「デザインもAIに任せる」なら、AIが案ごとに強調する言葉・バッジ（「限定」など）・"
+                       "写真の効果（主役の切り抜き・背景のぼかし）・縦書きなどの組み合わせを決めます。"
+                       "AIの考える深さは動画の編集とは別で、サムネイルだけ深く考えさせられます。")
             n.setWordWrap(True)
             n.setProperty("role", "sub")
             self.form.addRow(n)
@@ -578,7 +584,7 @@ class SectionForm(QWidget):
             w.setKeyboardTracking(False)
             w.valueChanged.connect(lambda v, k=key: self._set(k, round(float(v), 2)))
         elif kind == "bool":
-            w = QCheckBox("太くする")
+            w = QCheckBox(extra or "太くする")
             w.toggled.connect(lambda v, k=key: self._set(k, bool(v)))
         elif kind == "color":
             w = ColorButton(label)
@@ -667,7 +673,7 @@ class SectionForm(QWidget):
         self.sec()[key] = value
         if key == "style" and self.path[0] == "thumbnail":
             # 前の見せ方で決めた色が残ると、新しい見せ方に合わないので、見せ方の色に戻す（あとで変えられる）
-            for k in ("text_color", "outline_color", "outer_color", "accent_color"):
+            for k in ("text_color", "outline_color", "outer_color", "accent_color", "emphasis_color", "badge_color"):
                 self.sec().pop(k, None)
             self.load()
         self.ed.changed(self.panel)

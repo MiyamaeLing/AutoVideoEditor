@@ -155,6 +155,8 @@ print('gui ok')
     test_clip.run_all(check, out, fx)
     import test_thumbstyle   # サムネイルの見せ方（上品・ポップ・シンプル）と文字の置き方
     test_thumbstyle.run_all(check, out, fx)
+    import test_thumbart   # サムネイルの凝った表現（強調・縦書き・バッジ・切り抜き・効果）とAIのデザイン
+    test_thumbart.run_all(check, out, fx)
 
     failed = [r for r in results if not r[1]]
     print(f"\n{len(results) - len(failed)}/{len(results)} 件 成功")
