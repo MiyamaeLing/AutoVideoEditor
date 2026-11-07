@@ -34,9 +34,10 @@ def lock_path(qpath: Path) -> Path:
     return Path(qpath).with_suffix(".lock")
 
 
-def default_out(inputs: list[str]) -> Path:
-    p = Path(inputs[0])
-    return p.parent / f"{p.stem}_roughcut"
+def default_out(inputs: list[str], base: str | None = None) -> Path:
+    """結果フォルダ。base（「作成」タブで選んだ保存先）が無ければ、素材と同じ場所の「<名前>_roughcut」"""
+    import rc_media
+    return rc_media.result_dir(inputs, base)
 
 
 class Queue:
@@ -113,7 +114,9 @@ class Queue:
 
     def add(self, inputs: list[str], goal: str = "finish", mode: str = "talk", llm: str = "api",
             cam2: list[str] | None = None, template: str | None = None, glossary: list[str] | None = None,
-            effort: str = "medium", caption_chars: int = 24, device: str = "auto", out: str | None = None) -> dict:
+            effort: str = "medium", caption_chars: int = 24, device: str = "auto", out: str | None = None,
+            out_base: str | None = None) -> dict:
+        """out_base: 結果フォルダを作る場所（out が無いとき。空なら素材と同じ場所）"""
         if goal not in GOALS:
             raise ValueError(f"goal は {', '.join(GOALS)} のどれかです")
         if llm == "manual":
@@ -127,7 +130,7 @@ class Queue:
             "id": uuid.uuid4().hex[:8], "inputs": inputs, "cam2": [str(Path(p).resolve()) for p in cam2 or []],
             "goal": goal, "mode": mode, "llm": llm, "template": str(template or DEFAULT_TEMPLATE),
             "glossary": list(glossary or []), "effort": effort, "caption_chars": int(caption_chars), "device": device,
-            "out": str(Path(out).resolve()) if out else str(default_out(inputs)),
+            "out": str(Path(out).resolve()) if out else str(default_out(inputs, out_base)),
             "status": "waiting", "steps_done": [], "message": "", "added": rc_ops.now_text(),
             "started": "", "finished": "", "elapsed": 0, "result": {},
         }

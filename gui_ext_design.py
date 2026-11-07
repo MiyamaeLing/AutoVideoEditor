@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 import rc_design
+import rc_thumb
 
 APP_DIR = Path(__file__).resolve().parent
 MEDIA_FILTER = ("画像・動画 (*.png *.jpg *.jpeg *.webp *.bmp *.mp4 *.MP4 *.mov *.MOV *.mts *.MTS *.m2ts *.mkv *.avi);;"
@@ -34,7 +35,7 @@ MOOD_CHIPS = ["落ち着いた", "ポップ", "ガジェット系", "ナチュ�
 DEFAULTS = {"font": "BIZ UDPGothic", "size": 64, "bold": True, "color": "#FFFFFF", "outline_color": "#000000",
             "outline": 4, "shadow": 0, "margin_bottom": 56, "box_color": "#2B6CB0", "position": "top",
             "margin_v": 70, "animation": "pop", "duration": 2.5, "text_color": "#FFE14D", "outer_color": "#FFFFFF",
-            "accent_color": "#2B6CB0"}
+            "accent_color": "#2B6CB0", "style": rc_thumb.DEFAULT_STYLE}
 
 # (キー, 画面の名前, 種類, 追加の情報)
 SPEC_CAPTION = [("font", "フォント", "font", None), ("size", "文字の大きさ", "int", (20, 200)),
@@ -51,9 +52,10 @@ SPEC_TELOP = [("font", "フォント", "font", None), ("size", "文字の大き�
 SPEC_CHAPTER = [("font", "フォント", "font", None), ("size", "文字の大きさ", "int", (20, 220)),
                 ("bold", "太字", "bool", None), ("color", "文字の色", "color", None),
                 ("box_color", "帯の色", "color", None), ("duration", "表示する秒数", "float", (0.5, 10.0))]
-SPEC_THUMB = [("font_file", "フォント", "thumbfont", None), ("text_color", "文字の色", "color", None),
-              ("outline_color", "縁取り（内側）", "color", None), ("outer_color", "縁取り（外側）", "color", None),
-              ("accent_color", "帯の色（上に帯）", "color", None)]
+SPEC_THUMB = [("style", "見せ方", "choice", [(k, v["label"]) for k, v in rc_thumb.STYLES.items()]),
+              ("font_file", "フォント", "thumbfont", None), ("text_color", "文字の色", "color", None),
+              ("outline_color", "縁取り・影の色", "color", None), ("outer_color", "外側の縁取り（ポップ）", "color", None),
+              ("accent_color", "帯・線の色", "color", None)]
 # (タブ名, 設定の場所, 項目, 見本のパネル)
 SECTIONS = [("字幕", ("caption",), SPEC_CAPTION, "emphasis")] + \
     [(label, ("telop", key), SPEC_TELOP, key) for key, label in rc_design.TELOPS] + \
@@ -541,7 +543,8 @@ class SectionForm(QWidget):
             self.form.addRow(lab, wd)
             self.rows[key] = (lab, wd)
         if panel == "thumb":
-            n = QLabel("サムネイルは、書き出しのあとに自動で作られる案（「サムネイル」画面）に使われます。")
+            n = QLabel("サムネイルは、書き出しのあとに自動で作られる案（「サムネイル」画面）に使われます。"
+                       "見せ方を変えると、色は見せ方の色に戻ります。帯・線の色が「自動」なら、写真から選びます。")
             n.setWordWrap(True)
             n.setProperty("role", "sub")
             self.form.addRow(n)
@@ -634,7 +637,12 @@ class SectionForm(QWidget):
                 d = DEFAULTS.get(key, "#FFFFFF")
                 if key == "box_color" and self.path[0] == "chapter_card":
                     d = "#1A1A1A"
-                w.set_value(s.get(key, d))
+                if self.path[0] == "thumbnail":   # サムネイルは、決めていない色は見せ方の色
+                    d = rc_thumb.STYLES.get(s.get("style") or rc_thumb.DEFAULT_STYLE, {}).get(key) or ""
+                v = s.get(key) or d
+                w.set_value(v)
+                if self.path[0] == "thumbnail" and str(v).lower() in ("auto", ""):
+                    w.setText("自動（写真から）" if str(v).lower() == "auto" else "なし")
             elif kind == "choice":
                 w.setCurrentIndex(max(0, w.findData(s.get(key, DEFAULTS.get(key)))))
             elif kind == "look":
@@ -657,6 +665,11 @@ class SectionForm(QWidget):
 
     def _set(self, key, value):
         self.sec()[key] = value
+        if key == "style" and self.path[0] == "thumbnail":
+            # 前の見せ方で決めた色が残ると、新しい見せ方に合わないので、見せ方の色に戻す（あとで変えられる）
+            for k in ("text_color", "outline_color", "outer_color", "accent_color"):
+                self.sec().pop(k, None)
+            self.load()
         self.ed.changed(self.panel)
 
     def _set_look(self, box: bool):

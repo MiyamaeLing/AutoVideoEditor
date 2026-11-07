@@ -133,3 +133,54 @@ class SourceSet:
             if e - s > 1e-3:
                 out.append((i, s - off, e - off))
         return out
+
+
+# ---------------------------------------------------------------- 結果フォルダ（○○_roughcut）の場所
+SOURCES_FILE = "sources.json"   # どの素材の結果か（保存先を選んだときに、同じ名前の別の動画と区別するため）
+
+
+def _same_path(p) -> str:
+    return os.path.normcase(str(Path(p).resolve()))
+
+
+def folder_inputs(d: Path) -> list[str] | None:
+    """結果フォルダが、どの素材の結果か（sources.json か session.json の inputs）。分からなければ None"""
+    for name in (SOURCES_FILE, "session.json"):
+        f = Path(d) / name
+        if not f.is_file():
+            continue
+        try:
+            v = json.loads(f.read_text(encoding="utf-8-sig")).get("inputs")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if v:
+            return [_same_path(p) for p in v]
+    return None
+
+
+def result_dir(inputs, base=None, reserve: bool = True) -> Path:
+    """荒編集の結果フォルダ。
+
+    base が無ければ、今まで通り素材と同じ場所の「<名前>_roughcut」。
+    base（画面で選んだ保存先）があればその中に作る。カメラのファイル名（C0001.MP4 など）は撮影ごとに同じなので、
+    同じ名前のフォルダが別の素材の結果なら「<名前>_2_roughcut」「<名前>_3_roughcut」…にする（前の結果を上書きしない）。
+    reserve: 決めたフォルダを作って sources.json を書き、あとから同じ名前の別の素材が来ても分かるようにする
+    （まとめて処理で、まだ動かしていない動画どうしがぶつからないように）。False なら決めるだけ（画面の表示用）
+    """
+    first = Path(inputs[0])
+    if not base:
+        return first.parent / f"{first.stem}_roughcut"
+    want = [_same_path(p) for p in inputs]
+    n = 1
+    while True:
+        d = Path(base) / (f"{first.stem}_roughcut" if n == 1 else f"{first.stem}_{n}_roughcut")
+        if not d.exists():
+            break
+        if d.is_dir() and (not any(d.iterdir()) or folder_inputs(d) == want):
+            break   # 空のフォルダか、同じ素材の結果（作り直し・途中からの再開）
+        n += 1
+    if reserve:
+        d.mkdir(parents=True, exist_ok=True)
+        (d / SOURCES_FILE).write_text(json.dumps({"inputs": [str(Path(p).resolve()) for p in inputs]},
+                                                 ensure_ascii=False, indent=1), encoding="utf-8")
+    return d.resolve() if reserve else d

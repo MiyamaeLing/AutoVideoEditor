@@ -131,8 +131,10 @@ class QueuePage(QWidget):
     def _settings(self) -> dict:
         c = self.win.create
         words = [w.strip() for w in re.split(r"[、,，\n]", c.glossary.text()) if w.strip()]
+        base = c.out_base()   # 「作成」タブの保存先（None なら素材と同じ場所）
         return dict(mode=c.mode(), llm=c.llm.currentData(), template=c.template.currentData(), glossary=words,
-                    effort=c.effort.currentData(), caption_chars=c.cap_chars.value(), device=c.device.currentData())
+                    effort=c.effort.currentData(), caption_chars=c.cap_chars.value(), device=c.device.currentData(),
+                    out_base=str(base) if base else None)
 
     def _check_llm(self, llm) -> bool:
         if llm == "manual":
@@ -144,7 +146,7 @@ class QueuePage(QWidget):
 
     def add_files(self, paths: list[Path], goal: str | None = None) -> int:
         st = self._settings()
-        if not self._check_llm(st["llm"]):
+        if not self._check_llm(st["llm"]) or not self.win.create.check_out_base():
             return 0
         n = 0
         for p in paths:
@@ -162,7 +164,7 @@ class QueuePage(QWidget):
             QMessageBox.information(self, "素材がありません", "「作成」タブに素材の動画を入れてから押してください。")
             return False
         st = self._settings()
-        if not self._check_llm(st["llm"]):
+        if not self._check_llm(st["llm"]) or not c.check_out_base():
             return False
         try:
             it = self.q.add([str(p) for p in c.files.paths()], goal=goal, cam2=[str(p) for p in c.cam2.paths()], **st)

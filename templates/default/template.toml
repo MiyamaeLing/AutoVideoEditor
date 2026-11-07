@@ -110,14 +110,18 @@ dir = "se"                # pop.wav / ding.wav / whoosh.wav / boing.wav
 
 # ---- サムネイル ----
 [thumbnail]
-# 文字に使うフォントファイル（.ttf / .otf / .ttc）。空なら fonts フォルダ → Windows標準の太字フォントの順に探します
-font_file = "C:/Windows/Fonts/BIZ-UDGothicB.ttc"
-font_index = 1              # .ttc の中の何番目のフォントか（BIZ-UDGothicB.ttc は 1 = BIZ UDPゴシック 太字）
-text_color = "#FFE14D"      # 文字の色
-outline_color = "#111111"   # 文字の縁取り（内側）
-outer_color = "#FFFFFF"     # 文字の縁取り（外側）
-accent_color = "#2B6CB0"    # 帯の色（「上に帯」のデザイン）
-layouts = ["bottom", "band", "side"]   # bottom=下に大きな文字 / band=上に帯 / side=横に文字
+# 見せ方: elegant=上品（明朝体の白い文字に影・小さな金の見出し） / pop=ポップ（太い文字に二重のふち） / simple=シンプル（半透明の板に白い文字）
+style = "elegant"
+# 文字に使うフォントファイル（.ttf / .otf / .ttc）。空なら fonts フォルダ → 見せ方に合う Windows のフォントの順に探します
+font_file = ""
+font_index = 0              # .ttc の中の何番目のフォントか（0から数える）
+# 色は空なら見せ方の色を使います（"#RRGGBB" で決めると、そちらを使います）
+text_color = ""             # 文字の色
+outline_color = ""          # 文字の縁取り・影の色
+outer_color = ""            # ポップの外側の縁取り
+accent_color = ""           # 帯・線・見出しの札の色。"auto" = 写真から選ぶ
+label = true                # 大きな文字の上に、商品名などの小さな見出しを添える（AIで選んだとき）
+layouts = ["bottom", "band", "side"]   # bottom=大きな文字（上か下） / band=帯（上か下） / side=横に文字（左か右）。文字は写真の空いている側に置きます
 
 # ---- 声を聞き取りやすくする（仕上げの書き出しで、声のトラックにかける） ----
 [audio_clean]

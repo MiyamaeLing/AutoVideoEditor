@@ -317,8 +317,12 @@ KEY_NOTES = {
     "se.dir": "pop.wav / ding.wav / whoosh.wav / boing.wav",
     "thumbnail.font_file": "文字に使うフォントファイル（.ttf / .otf / .ttc）",
     "thumbnail.font_index": ".ttc の中の何番目のフォントか（0から数える）",
-    "thumbnail.text_color": "文字の色", "thumbnail.outline_color": "文字の縁取り（内側）",
-    "thumbnail.outer_color": "文字の縁取り（外側）", "thumbnail.accent_color": "帯の色（「上に帯」のデザイン）",
+    "thumbnail.style": "見せ方: elegant=上品（明朝体の白い文字に影） / pop=ポップ（太い文字に二重のふち） / simple=シンプル（半透明の板に白い文字）",
+    "thumbnail.label": "大きな文字の上に、商品名などの小さな見出しを添える（true / false）",
+    "thumbnail.font_weight": "太さを変えられるフォント（Noto の VF など）の太さ（例: Bold / Black）",
+    "thumbnail.text_color": "文字の色（空なら見せ方の色）", "thumbnail.outline_color": "文字の縁取り・影の色（空なら見せ方の色）",
+    "thumbnail.outer_color": "ポップの外側の縁取り（空なら見せ方の色）",
+    "thumbnail.accent_color": "帯・線・見出しの札の色（auto = 写真から選ぶ。空なら見せ方の色）",
     "thumbnail.layouts": "bottom=下に大きな文字 / band=上に帯 / side=横に文字",
 }
 _BARE = re.compile(r"[A-Za-z0-9_-]+")
@@ -598,7 +602,10 @@ def palette(cfg: dict) -> list[tuple[str, str]]:
         out.append((label, c.get("color", "#FFFFFF")))
         out.append((label + ("の帯" if "box_color" in c else "の縁"), c.get("box_color", c.get("outline_color", "#000000"))))
     out.append(("章カード", cfg.get("chapter_card", {}).get("box_color", "#1A1A1A")))
-    out.append(("サムネ", cfg.get("thumbnail", {}).get("text_color", "#FFE14D")))
+    import rc_thumb
+    th = cfg.get("thumbnail", {})
+    out.append(("サムネ", th.get("text_color") or rc_thumb.STYLES.get(th.get("style") or rc_thumb.DEFAULT_STYLE,
+                                                                      {}).get("text_color", "#FFE14D")))
     return [(n, norm_color(c, "#000000")) for n, c in out]
 
 
@@ -680,9 +687,13 @@ def design_schema(font_names: list[str]) -> dict:
                     "chapter_card": {**obj, "required": ["font", "size", "color", "box_color"],
                                      "properties": {"font": fonts, "size": {"type": "integer"}, "color": _COLOR,
                                                     "box_color": _COLOR}},
-                    "thumbnail": {**obj, "required": ["font", "text_color", "outline_color", "outer_color",
+                    "thumbnail": {**obj, "required": ["style", "font", "text_color", "outline_color", "outer_color",
                                                       "accent_color"],
-                                  "properties": {"font": fonts, "text_color": _COLOR, "outline_color": _COLOR,
+                                  "properties": {"style": {"type": "string", "enum": ["elegant", "pop", "simple"],
+                                                           "description": "見せ方: elegant=上品（明朝体の白い文字に影）"
+                                                                          " / pop=ポップ（太い文字に二重のふち）"
+                                                                          " / simple=シンプル（半透明の板に白い文字）"},
+                                                 "font": fonts, "text_color": _COLOR, "outline_color": _COLOR,
                                                  "outer_color": _COLOR, "accent_color": _COLOR}},
                 }}
     return {**obj, "required": ["proposals"],
@@ -697,7 +708,7 @@ def look_summary(cfg: dict) -> dict:
     for k, _ in TELOPS:
         out["telops"][k] = {kk: v for kk, v in cfg.get("telop", {}).get(k, {}).items() if kk in keys}
     out["chapter_card"] = {k: v for k, v in cfg.get("chapter_card", {}).items() if k in keys}
-    out["thumbnail"] = {k: v for k, v in cfg.get("thumbnail", {}).items() if k.endswith("color")}
+    out["thumbnail"] = {k: v for k, v in cfg.get("thumbnail", {}).items() if k.endswith("color") or k == "style"}
     return out
 
 
@@ -835,9 +846,13 @@ def apply_proposal(base_cfg: dict, p: dict, font_names: list[str] | None = None,
 
     th = cfg.setdefault("thumbnail", {})
     pth = p.get("thumbnail") if isinstance(p.get("thumbnail"), dict) else {}
-    for k, d in (("text_color", "#FFE14D"), ("outline_color", "#111111"), ("outer_color", "#FFFFFF"),
-                 ("accent_color", "#2B6CB0")):
-        th[k] = norm_color(pth.get(k), th.get(k, d))
+    import rc_thumb
+    if pth.get("style") in rc_thumb.STYLES:
+        th["style"] = pth["style"]
+    sd = rc_thumb.STYLES.get(th.get("style") or rc_thumb.DEFAULT_STYLE, {})
+    for k in ("text_color", "outline_color", "outer_color", "accent_color"):
+        d = sd.get(k) if str(sd.get(k, "")).startswith("#") else {"outer_color": "#FFFFFF"}.get(k, "#2B6CB0")
+        th[k] = norm_color(pth.get(k), th.get(k) or d)
     fam = _font(pth.get("font"), allowed, "")
     if fam and faces:
         set_thumbnail_font(cfg, fam, faces, tpl_dir)
@@ -889,7 +904,7 @@ PRESETS = [
                 "warning": {"color": "#FFFFFF", "look": "outline", "accent_color": "#B83A3A", "outline": 9},
                 "funny": {"color": "#FFF4D6", "look": "outline", "accent_color": "#6B4E8E", "outline": 9}},
      "chapter_card": {"color": "#FFFFFF", "box_color": "#1C2B4A"},
-     "thumbnail": {"text_color": "#FFFFFF", "outline_color": "#1C2B4A", "outer_color": "#C9D6EA",
+     "thumbnail": {"style": "elegant", "text_color": "#FFFFFF", "outline_color": "#1C2B4A", "outer_color": "#C9D6EA",
                    "accent_color": "#1C2B4A"}},
     {"keywords": ["ポップ", "明る", "元気", "かわい", "楽し", "pop"],
      "name": "ポップなビタミン", "concept": "黄色とピンクの元気な配色。強調はポンッと大きく飛び出します。",
@@ -900,7 +915,7 @@ PRESETS = [
                 "warning": {"color": "#FFFFFF", "look": "outline", "accent_color": "#E53E3E", "outline": 10},
                 "funny": {"color": "#FFFFFF", "look": "outline", "accent_color": "#38B2AC", "outline": 10}},
      "chapter_card": {"color": "#FFFFFF", "box_color": "#E0457B"},
-     "thumbnail": {"text_color": "#FFE14D", "outline_color": "#E0457B", "outer_color": "#FFFFFF",
+     "thumbnail": {"style": "pop", "text_color": "#FFE14D", "outline_color": "#E0457B", "outer_color": "#FFFFFF",
                    "accent_color": "#FF8A3D"}},
     {"keywords": ["ガジェット", "テック", "クール", "かっこ", "メカ", "工具", "レビュー"],
      "name": "ガジェット系ネオン", "concept": "黒に近い帯と水色のアクセント。機械やガジェットが映える、クールな見た目です。",
@@ -911,7 +926,7 @@ PRESETS = [
                 "warning": {"color": "#FFD23F", "look": "box", "accent_color": "#1A1A1A", "animation": "pop"},
                 "funny": {"color": "#FFFFFF", "look": "outline", "accent_color": "#7B3FE4", "outline": 9}},
      "chapter_card": {"color": "#5CE1FF", "box_color": "#0B0F17"},
-     "thumbnail": {"text_color": "#5CE1FF", "outline_color": "#0B0F17", "outer_color": "#FFFFFF",
+     "thumbnail": {"style": "simple", "text_color": "#5CE1FF", "outline_color": "#0B0F17", "outer_color": "#FFFFFF",
                    "accent_color": "#11161F"}},
     {"keywords": ["ナチュラル", "自然", "屋外", "アウトドア", "キャンプ", "ほっこり", "工作", "木"],
      "name": "ナチュラルグリーン", "concept": "生成り色の文字と深い緑。屋外や手作りの雰囲気になじむ見た目です。",
@@ -922,7 +937,7 @@ PRESETS = [
                 "warning": {"color": "#FFFFFF", "look": "outline", "accent_color": "#B5532F", "outline": 9},
                 "funny": {"color": "#FFFFFF", "look": "outline", "accent_color": "#C27C2C", "outline": 9}},
      "chapter_card": {"color": "#FFFDF5", "box_color": "#2F5D3A"},
-     "thumbnail": {"text_color": "#FFF1B8", "outline_color": "#2F3E2C", "outer_color": "#FFFFFF",
+     "thumbnail": {"style": "elegant", "text_color": "#FFF1B8", "outline_color": "#2F3E2C", "outer_color": "#FFFFFF",
                    "accent_color": "#2F5D3A"}},
     {"keywords": ["音楽", "MV", "エモ", "しっとり", "夜", "おしゃれ"],
      "name": "夜のモノトーン", "concept": "白と黒だけの、写真のような静かな見た目。音楽や作品が主役になります。",
@@ -933,7 +948,7 @@ PRESETS = [
                 "funny": {"color": "#FFFFFF", "look": "outline", "accent_color": "#333333", "outline": 8,
                           "animation": "fade"}},
      "chapter_card": {"color": "#FFFFFF", "box_color": "#000000"},
-     "thumbnail": {"text_color": "#FFFFFF", "outline_color": "#000000", "outer_color": "#555555",
+     "thumbnail": {"style": "simple", "text_color": "#FFFFFF", "outline_color": "#000000", "outer_color": "#555555",
                    "accent_color": "#000000"}},
 ]
 

@@ -149,6 +149,12 @@ print('gui ok')
     test_transcribe_numpy.run_all(check, out, fx)
     import test_captions   # 字幕の分け方（単語の途中で切らない）
     test_captions.run_all(check, out, fx)
+    import test_outdir   # 保存先（結果フォルダを作る場所）を選ぶ
+    test_outdir.run_all(check, out, fx)
+    import test_clip   # 完成動画の区間を書き出す
+    test_clip.run_all(check, out, fx)
+    import test_thumbstyle   # サムネイルの見せ方（上品・ポップ・シンプル）と文字の置き方
+    test_thumbstyle.run_all(check, out, fx)
 
     failed = [r for r in results if not r[1]]
     print(f"\n{len(results) - len(failed)}/{len(results)} 件 成功")

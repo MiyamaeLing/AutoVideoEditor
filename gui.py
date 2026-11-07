@@ -17,7 +17,7 @@ from PySide6.QtGui import QBrush, QColor, QDesktopServices, QFont, QGuiApplicati
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
-    QLineEdit, QListWidget, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QRadioButton,
+    QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QRadioButton,
     QSpinBox, QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -30,6 +30,7 @@ except Exception:  # 環境によっては動画再生の部品が使えない
 
 APP_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(APP_DIR))
+import rc_media  # noqa: E402
 import rc_win  # noqa: E402,F401  (FFmpeg実行時に黒い画面を出さない)
 from rc_transcribe import is_filler_only  # noqa: E402
 VIDEO_EXT = "動画ファイル (*.mp4 *.MP4 *.mov *.MOV *.mts *.MTS *.m2ts *.mkv *.avi);;すべて (*.*)"
@@ -377,9 +378,10 @@ class FileList(QListWidget):
         have = {str(p) for p in self.paths()}
         for p in sorted(Path(x) for x in paths):
             if p.is_file() and str(p) not in have:
-                self.addItem(p.name)
-                self.item(self.count() - 1).setData(Qt.UserRole, str(p))
-                self.item(self.count() - 1).setToolTip(str(p))
+                it = QListWidgetItem(p.name)   # パスを入れてから足す（足したときの知らせで paths() を読めるように）
+                it.setData(Qt.UserRole, str(p))
+                it.setToolTip(str(p))
+                self.addItem(it)
 
     def remove_selected(self):
         for it in self.selectedItems():
@@ -576,6 +578,29 @@ class CreatePage(QWidget):
         self.glossary.setPlaceholderText("例: マキタ、インパクトドライバー、Qpic（「、」区切り。字幕の精度が上がります）")
         form.addRow("固有名詞", self.glossary)
 
+        # 保存先: 結果（○○_roughcut フォルダ）を作る場所。空なら素材と同じ場所（今まで通り）。次回も同じ場所を使う
+        self.out_edit = QLineEdit()
+        self.out_edit.setReadOnly(True)
+        self.out_edit.setPlaceholderText("素材と同じ場所（今まで通り）")
+        out_btn = QPushButton("選ぶ…")
+        out_btn.setToolTip("荒編集の結果（○○_roughcut フォルダ）を作る場所を選びます。次回も同じ場所を使います")
+        out_btn.clicked.connect(self._pick_out_base)
+        self.out_reset = QPushButton("素材と同じ場所に戻す")
+        self.out_reset.clicked.connect(lambda: self.set_out_base(""))
+        row = QHBoxLayout()
+        row.addWidget(self.out_edit, 1)
+        row.addWidget(out_btn)
+        row.addWidget(self.out_reset)
+        form.addRow("保存先", row)
+        self.out_hint = QLabel()
+        self.out_hint.setWordWrap(True)
+        self.out_hint.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        form.addRow("", self.out_hint)
+        m = self.files.model()   # 素材を足す・消す・並べ替える・全部消す（clear）たびに、結果のフォルダの表示を直す
+        for sig in (m.rowsInserted, m.rowsRemoved, m.rowsMoved, m.modelReset):
+            sig.connect(lambda *_: self._update_out_hint())
+        self.set_out_base(st.value("out_base", "") or "", save=False)
+
         self.adv = QToolButton()
         self.adv.setText("詳細設定 ▸")
         self.adv.setCheckable(True)
@@ -632,6 +657,60 @@ class CreatePage(QWidget):
         if fs:
             self.win.settings.setValue("last_dir", str(Path(fs[0]).parent))
             lst.add(fs)
+
+    # --- 保存先 ---
+    def out_base(self) -> Path | None:
+        """選んだ保存先。None なら素材と同じ場所"""
+        b = self.win.settings.value("out_base", "") or ""
+        return Path(b) if b else None
+
+    def set_out_base(self, path: str, save: bool = True):
+        if save:
+            self.win.settings.setValue("out_base", str(path or ""))
+        self.out_edit.setText(str(path or ""))
+        self.out_edit.setToolTip(str(path or ""))
+        self.out_reset.setVisible(bool(path))
+        self._update_out_hint()
+
+    def _pick_out_base(self):
+        start = str(self.out_base() or self.win.settings.value("last_dir", ""))
+        d = QFileDialog.getExistingDirectory(self, "結果を保存するフォルダを選ぶ", start)
+        if d:
+            self.set_out_base(str(Path(d)))
+
+    def _update_out_hint(self):
+        """保存先の下の説明。結果を作るフォルダ（同じ名前の別の動画があれば番号付き）か、見つからないことを出す"""
+        try:
+            self._show_out_hint()
+        except RuntimeError:   # 画面を閉じる途中で素材の一覧が片付けられたとき（設定や表示の部品がもう無い）
+            pass
+
+    def _show_out_hint(self):
+        base = self.out_base()
+        if base and not base.is_dir():
+            text, role = ("このフォルダが見つかりません。外付けドライブなら、つないでください"
+                          "（「選ぶ…」で選び直すこともできます）"), "notice"
+        elif self.files.count():
+            text, role = f"結果: {self.out_dir(reserve=False)}", "sub"
+        else:
+            text, role = ("素材を入れると、結果を作るフォルダがここに出ます" if base else ""), "sub"
+        self.out_hint.setText(text)
+        self.out_hint.setVisible(bool(text))
+        if self.out_hint.property("role") != role:   # 色はテーマ（rc_theme）の役割で決める（ダークモードでも読める）
+            self.out_hint.setProperty("role", role)
+            self.out_hint.style().unpolish(self.out_hint)
+            self.out_hint.style().polish(self.out_hint)
+
+    def check_out_base(self) -> bool:
+        """保存先を選んでいるのに見つからないとき（外付けドライブを外したなど）は、知らせて止める"""
+        base = self.out_base()
+        if base and not base.is_dir():
+            QMessageBox.information(self, "保存先が見つかりません",
+                                    f"保存先のフォルダが見つかりません:\n{base}\n\n外付けドライブなら、つないでからもう一度"
+                                    "押してください。「保存先」の「選ぶ…」で選び直すか、「素材と同じ場所に戻す」も使えます。")
+            self._update_out_hint()
+            return False
+        return True
 
     def refresh_templates(self):
         cur = self.win.settings.value("template", "default")
@@ -712,16 +791,17 @@ class CreatePage(QWidget):
         self.win.runner.start("finish.py", args, "テンプレートの見本を作成中", done)
 
     # --- 実行 ---
-    def out_dir(self) -> Path:
-        p = self.files.paths()[0]
-        return p.parent / f"{p.stem}_roughcut"
+    def out_dir(self, reserve: bool = True) -> Path:
+        """結果フォルダ。保存先を選んでいれば、その中に作る（同じ名前の別の動画の結果があれば番号を付ける）。
+        reserve=False は決めるだけ（表示用）。True ならフォルダを作って押さえる"""
+        return rc_media.result_dir(self.files.paths(), self.out_base(), reserve=reserve)
 
     def start(self, full: bool):
         if not self.files.count():
             QMessageBox.information(self, "素材がありません", "素材の動画をドラッグ＆ドロップしてください。")
             return
         llm = self.llm.currentData()
-        if not self.win.check_api_key(llm):
+        if not self.win.check_api_key(llm) or not self.check_out_base():
             return
         self.save_settings()
         AI_STATE["request"] = self.request.toPlainText()

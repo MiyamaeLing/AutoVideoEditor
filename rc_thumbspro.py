@@ -507,13 +507,11 @@ def compose_person(frame: Image.Image, alpha: np.ndarray, text: str, style: str,
     """人物を大きく配置し、白いフチを付けて、反対側に大きな文字を置く"""
     import rc_thumb as T
     cfg = cfg or settings(tpl)
-    tcfg = tpl.get("thumbnail", {})
     W, H = T.W, T.H
     frame = frame.convert("RGB").resize((W, H))
     alpha = cv2.resize(alpha.astype(np.float32), (W, H)) if alpha.shape != (H, W) else alpha
-    accent = _hex(cfg.get("burst_color") or tcfg.get("accent_color", "#2B6CB0"))
-    colors = (_hex(tcfg.get("text_color", "#FFE14D")), _hex(tcfg.get("outline_color", "#111111")),
-              _hex(tcfg.get("outer_color", "#FFFFFF")))
+    st = T.text_style(tpl)   # 文字の見せ方（上品・ポップ・シンプル）は、ほかのサムネイル案と同じにする
+    accent = _hex(cfg.get("burst_color")) if cfg.get("burst_color") else T._accent(frame, st)
 
     ys, xs = np.nonzero(alpha > 0.5)
     x0, x1, y0, y1 = xs.min(), xs.max() + 1, ys.min(), ys.max() + 1
@@ -566,10 +564,10 @@ def compose_person(frame: Image.Image, alpha: np.ndarray, text: str, style: str,
     fp, idx = font
     free_w = int(W - pw - margin * 2 + pw * 0.12) if px > W * 0.2 or px < 0 else int(W * 0.5)
     free_w = max(int(W * 0.42), min(int(W * 0.62), free_w))
-    f, size = T._fit(fp, idx, lines, free_w - 60, H - 120, start=210)
+    f, size = T._fit(fp, idx, lines, free_w - 60, H - 120, start=210, pad=T._pad(st))
     total_h = int(size * 1.15) * len(lines)
     tx = 40 if side == "right" else W - free_w + 20
-    T._draw_text(canvas, lines, f, size, tx, (H - total_h) / 2 - size * 0.05, "left", colors)
+    T._draw_styled(canvas, lines, f, size, tx, (H - total_h) / 2 - size * 0.05, "left", {**st, "_accent": accent})
     return canvas.filter(ImageFilter.UnsharpMask(radius=1.2, percent=50, threshold=2))
 
 
