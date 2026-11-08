@@ -13,6 +13,8 @@
 - 行の間: 大きくした強調の言葉の g・y などが、次の行の字に重ならない
 - 影: 文字のある側（下半分・右半分など）を端までムラなく。濃さは写真の明るさとAIが決めた強さ（明るく・ふつう・くっきり）で
 - AIへの指示: 前回の案の画像（画面と同じ並び）・内容・これまでの指示をAIに見せて作り直す。指示は積み重なり、指示なしで戻る
+- 場面: 候補は見どころなど8つまで＋動画の最後まで均等に。選んだ場面（完成動画の時刻）は必ず案1から使う。
+  別の場面から選び直す（今の場面を外し、取る位置もずらす）・場面を増やす・指示のときは同じ候補を使い回す
 """
 from __future__ import annotations
 
@@ -708,6 +710,143 @@ def t_generate(check, out: Path, fx: Path):
     check("AIへの指示: AIを使わないときは指示を使わない（止まらずに作る）", not (td / "requests.json").exists())
 
 
+def t_scene_units(check):
+    """場面の候補の取り方・時刻の読み書き・選んだ場面を必ず使う（動画なしで確かめられる所）"""
+    import rc_thumb as T
+    from rc_timeline import Piece
+
+    class TL:   # 完成 20秒（2つ目の区間は ×8 の早送り）。元素材 0〜90秒
+        fps = 10
+        duration = 20.0
+        pieces = [Piece(0, 0, 0, 0, 100, 0.0, 10.0), Piece(0, 0, 0, 100, 200, 10.0, 90.0)]
+
+        def map_time(self, t):
+            return 0.0 if 0 <= t < 90 else None
+    src = [T.source_at(TL(), x) for x in (5.0, 15.0, 30.0)]
+    check("場面: 完成動画の時刻 → 元素材の時刻（早送りの区間は倍率をかける・範囲の外は端に）",
+          src == [5.0, 50.0, 89.5], str(src))
+
+    class Long(TL):   # 見どころ・テロップがたくさんある長い動画（完成 600秒）
+        duration = 600.0
+        pieces = [Piece(0, 0, 0, 0, 6000, 0.0, 600.0)]
+
+        def map_time(self, t):
+            return t if 0 <= t < 600 else None
+    chunks = {i: {"start": i * 10.0, "end": i * 10.0 + 4} for i in range(60)}
+    dec = {"highlights": [{"id": i, "label": f"見どころ{i}"} for i in range(0, 30, 2)]}
+    c0 = T.candidate_times({}, Long(), chunks, dec, {})
+    pri = [t for t, why in c0 if why != "全体から"]
+    even = sorted(t for t, why in c0 if why == "全体から")
+    check("場面: 候補は20か所。見どころなどは8つまで、残りは動画の最後まで均等に（話の途中の場面ばかりにしない）",
+          len(c0) == T.N_CANDIDATES and len(pri) == T.N_PRIORITY and even[-1] > 540 and even[0] < 60,
+          f"{len(c0)} / 見どころ {len(pri)} / 全体 {[round(t) for t in even]}")
+    used = [pri[0], even[3]]
+    c1 = T.candidate_times({}, Long(), chunks, dec, {}, phase=T.PHASES[1], avoid=used)
+    check("場面: 別の場面から選び直すときは、今の案の場面から離し、均等に取る位置もずらす",
+          all(abs(t - u) > T.AVOID_GAP for t, _ in c1 for u in used)
+          and len({round(t) for t, w in c1 if w == "全体から"} & {round(t) for t in even}) < 3, str([round(t) for t, _ in c1]))
+    tt = T.parse_times("1:23, 4:56、83.5 1:02:03")
+    bad = []
+    for s in ("1:xx", "-3", "1::2"):
+        try:
+            T.parse_times(s)
+            bad.append(s)
+        except ValueError:
+            pass
+    check("場面: 時刻の書き方（1:23・83.5・1:02:03）を読み、読めないものは知らせる",
+          tt == [83.0, 296.0, 83.5, 3723.0] and not bad and T.fmt_time(83.4) == "1:23" and T.fmt_time(3723) == "1:02:03",
+          f"{tt} {bad}")
+    picks = [{"frame": 1, "text": "A"}, {"frame": 5, "text": "B"}, {"frame": 7, "text": "C"}]
+    f1 = [p["frame"] for p in T._force(picks, [7], ["x"])]
+    f2 = T._force(picks, [9, 5], ["x"])
+    check("場面: 選んだ場面は、この順で必ず先頭に（AIが使わなかった場面も入れる）。全部で3つまで",
+          f1 == [7, 1, 5] and [p["frame"] for p in f2] == [9, 5, 1] and f2[0]["text"] == "A"
+          and f2[0]["subject_box"] is None, f"{f1} {[p['frame'] for p in f2]}")
+    must = T._must_prompt([3, 7])
+    check("場面: 選んだ場面はAIに必ず使うよう伝える", "候補3・候補7" in must and "残りの1枚" in must and T._must_prompt([]) == "",
+          must)
+
+
+def t_scenes(check, out: Path, fx: Path):
+    """場面を選んで作る・別の場面から選び直す・場面を増やす（動画から。偽のAI）"""
+    import rc_llm
+    import rc_thumb as T
+    from rc_template import Template
+    sd = fx / "work_thumbart" / "sess"
+    if not (sd / "session.json").exists():
+        check("場面: 動画から（先に t_generate が必要）", False, "work_thumbart がありません")
+        return
+    td = sd / "thumbnails"
+    tpl = Template(fx / "tpl")
+    seen = []
+
+    def fake_call(client, anthropic, system, content, schema, effort, usage):
+        nos = [int(b["text"][2:b["text"].index("（")]) for b in content
+               if b.get("type") == "text" and b["text"].startswith("候補")]
+        seen.append({"system": system, "nos": nos, "texts": [b["text"] for b in content if b.get("type") == "text"]})
+        item = {"label": "", "text_position": "any", "subject_box": {"x0": 2, "y0": 2, "x1": 12, "y1": 12}, "reason": "テスト",
+                "emphasis": "", "badge": "", "effect": "none", "layouts": ["bottom", "band", "side"]}
+        return {"picks": [{**item, "frame": n, "text": f"案{k}"} for k, n in enumerate(nos[-3:], 1)]}   # 選んだ場面は使わない
+    orig = rc_llm._client, rc_llm._call
+    rc_llm._client, rc_llm._call = (lambda: (None, None)), fake_call
+    try:
+        T.generate(sd, tpl, "api")
+        pool0 = T.load_pool(td)
+        used0 = [i["source_time"] for i in json.loads((td / "thumbnails.json").read_text(encoding="utf-8"))]
+        check("場面: 候補を candidates.json に残す（完成動画の時刻つき。今のカットのもの）",
+              0 < len(pool0["cands"]) <= T.N_CANDIDATES and all("ot" in c and (td / "_candidates" / c["file"]).exists()
+                                                                for c in pool0["cands"]) and T.pool_valid(sd),
+              str(len(pool0.get("cands", []))))
+        # 選んだ場面: 候補の1つ（完成動画の時刻）と、候補に無い時刻
+        c = sorted(pool0["cands"], key=lambda c: c["ot"])[-1]
+        dur = max(x["ot"] for x in pool0["cands"])
+        other = round(min(x["ot"] for x in pool0["cands"]) + 1.3, 2)
+        seen.clear()
+        T.generate(sd, tpl, "api", scenes=[c["ot"], other])
+        info = json.loads((td / "thumbnails.json").read_text(encoding="utf-8"))
+        pool1 = T.load_pool(td)
+        sys_ = seen[-1]["system"] if seen else ""
+        check("場面: 選んだ場面は、AIが使わなくても案1・案2に（この順・完成動画の時刻も残す）",
+              len(info) == 3 and [i.get("chosen", False) for i in info] == [True, True, False]
+              and abs(info[0]["video_time"] - c["ot"]) < 0.05 and abs(info[1]["video_time"] - other) < 0.6,
+              str([(i.get("video_time"), i.get("chosen")) for i in info]))
+        check("場面: 候補に無い時刻は、その場面を取り出して候補に足す。AIには選んだ場面を必ず使うよう伝える",
+              len(pool1["cands"]) == len(pool0["cands"]) + 1 and "使う人が選んだ場面" in sys_
+              and sum("使う人が選んだ場面" in t for t in seen[-1]["texts"]) == 2, f"{len(pool1['cands'])} {dur}")
+        three = sorted(pool1["cands"], key=lambda c: c["ot"])[:3]
+        seen.clear()
+        T.generate(sd, tpl, "api", scenes=[x["ot"] for x in three])
+        check("場面: 3つ選んだら、AIにはその3つだけ見せる", seen and sorted(seen[-1]["nos"]) == sorted(x["no"] for x in three),
+              str(seen[-1]["nos"] if seen else None))
+        # 別の場面から選び直す
+        used = [i["source_time"] for i in json.loads((td / "thumbnails.json").read_text(encoding="utf-8"))]
+        T.generate(sd, tpl, "api", fresh=True)
+        pool2 = T.load_pool(td)
+        info2 = json.loads((td / "thumbnails.json").read_text(encoding="utf-8"))
+        check("場面: 別の場面から選び直すと、今の案の場面を外した新しい候補から選ぶ",
+              pool2["round"] == pool1["round"] + 1 and pool2["cands"]
+              and all(abs(x["t"] - u) > T.AVOID_GAP for x in pool2["cands"] for u in used)
+              and not any(i.get("chosen") for i in info2), f"round {pool2.get('round')} / {used0}")
+        # 場面を増やす（サムネイル案は作り直さない）
+        before = sorted((td).glob("thumb_*.jpg"))
+        mtimes = [f.stat().st_mtime for f in before]
+        new = T.more_scenes(sd, tpl, 6)
+        pool3 = T.load_pool(td)
+        ts = sorted(x["t"] for x in pool3["cands"])
+        check("場面: 場面を増やす（今の候補と重ならない所を足す。サムネイル案はそのまま）",
+              new and len(pool3["cands"]) == len(pool2["cands"]) + len(new)
+              and all(b - a > T.CAND_GAP - 0.5 for a, b in zip(ts, ts[1:]))
+              and [f.stat().st_mtime for f in before] == mtimes, f"+{len(new)} / {[round(t, 1) for t in ts]}")
+        # 指示で作り直すときは、同じ候補を使い回す（番号も同じ）
+        T.generate(sd, tpl, "api", request="もっと明るく")
+        check("場面: 指示で作り直すときは、同じ候補を使い回す", T.load_pool(td)["cands"] == pool3["cands"])
+    except BaseException as e:  # noqa: BLE001
+        import traceback
+        check("場面: 動画から（偽のAI）", False, traceback.format_exc()[-800:])
+    finally:
+        rc_llm._client, rc_llm._call = orig
+
+
 def run_all(check, out: Path, fx: Path):
     t_values(check)
     t_emphasis(check)
@@ -722,7 +861,9 @@ def run_all(check, out: Path, fx: Path):
     t_band_center(check)
     t_lines(check)
     t_shade(check)
+    t_scene_units(check)
     t_generate(check, out, fx)
+    t_scenes(check, out, fx)
 
 
 if __name__ == "__main__":

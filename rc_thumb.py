@@ -11,6 +11,7 @@ import base64
 import io
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import NamedTuple
@@ -23,7 +24,11 @@ from rc_template import Template
 from rc_timeline import Timeline
 
 W, H = 1280, 720
-N_CANDIDATES = 12
+N_CANDIDATES = 20   # AIに見せる候補の静止画の数
+N_PRIORITY = 8      # そのうち、見どころ・テロップ・ズームの場面の上限（残りは動画全体から均等に。話の途中の場面ばかりにしない）
+CAND_GAP = 4.0      # 候補どうしの間（元素材の秒）
+AVOID_GAP = 6.0     # 「別の場面から選び直す」とき、今使っている場面からこれだけ離す（秒）
+PHASES = (0.5, 0.25, 0.75, 0.125, 0.625, 0.375, 0.875)   # 動画全体から均等に取る位置（選び直す・場面を増やすたびにずらす）
 # YouTube の一覧では、サムネイルの右下に動画の長さ（「12:34」など）が重ねて表示される。
 # 文字・見出し・バッジはここ（と、まわりに TIME_GAP の余白）に置かない
 TIME_BOX = (W - 240, H - 110, W, H)
@@ -151,48 +156,70 @@ def sharpness(img: Image.Image) -> float:
     return float(lap.var())
 
 
-def candidate_times(sess: dict, tl: Timeline, chunks: dict, decisions: dict, plan: dict) -> list[tuple[float, str]]:
-    """優先度の高い順に (元素材の時刻, 理由) を返す。"""
+def source_at(tl, ot: float) -> float | None:
+    """本編（完成動画からオープニングを除いた所）の時刻 → 元素材の時刻。範囲の外は端に寄せる"""
+    pieces = list(tl.pieces)
+    if not pieces:
+        return None
+    for p in pieces:
+        s, e = p.seq_start / float(tl.fps), p.seq_end / float(tl.fps)
+        if s <= ot < e:
+            # 早送り（rc_speedup.SpeedTimeline）の区間は、完成の1秒が元素材の「倍率」秒にあたる
+            speed = (p.g_out - p.g_in) / (e - s) if e > s else 1.0
+            return min(p.g_out - 0.01, p.g_in + (ot - s) * max(1.0, speed))
+    return pieces[0].g_in if ot < pieces[0].seq_start / float(tl.fps) else pieces[-1].g_out - 0.5
+
+
+def candidate_times(sess: dict, tl: Timeline, chunks: dict, decisions: dict, plan: dict, n: int = N_CANDIDATES,
+                    phase: float = 0.5, avoid=(), avoid_gap: float = AVOID_GAP,
+                    priority: bool = True) -> list[tuple[float, str]]:
+    """候補の (元素材の時刻, 理由)。見どころ・テロップ・ズームの場面（N_PRIORITY まで）と、動画全体から均等に取った場面。
+    phase: 均等に取る位置のずらし方（0〜1）。avoid: これらの時刻から avoid_gap 秒以内は使わない（別の場面から選び直す）"""
     cut = set(sess.get("cut_ids", []))
-    want: list[tuple[float, str]] = []
+    pri: list[tuple[float, str]] = []
 
     def add(cid, why):
         c = chunks.get(cid)
         if c and cid not in cut:
-            want.append(((c["start"] + c["end"]) / 2, why))
-    for h in decisions.get("highlights", []):
-        add(h["id"], f"見どころ: {h.get('label', '')}")
-    for t in plan.get("telops", []):
-        if t.get("style") in ("emphasis", "funny"):
-            add(t["start_id"], f"テロップ: {t.get('text', '')}")
-    for z in plan.get("zooms", []):
-        add(z["id"], "ズーム")
-    # 残りは本編全体から均等に
-    total = tl.duration
-    for k in range(N_CANDIDATES):
-        ot = total * (k + 0.5) / N_CANDIDATES
-        for p in tl.pieces:
-            s, e = p.seq_start / float(tl.fps), p.seq_end / float(tl.fps)
-            if s <= ot < e:
-                # 早送り（rc_speedup.SpeedTimeline）の区間は、完成の1秒が元素材の「倍率」秒にあたる
-                speed = (p.g_out - p.g_in) / (e - s) if e > s else 1.0
-                want.append((min(p.g_out - 0.01, p.g_in + (ot - s) * max(1.0, speed)), "全体から"))
-                break
+            pri.append(((c["start"] + c["end"]) / 2, why))
+    if priority:
+        for h in decisions.get("highlights", []):
+            add(h["id"], f"見どころ: {h.get('label', '')}")
+        for t in plan.get("telops", []):
+            if t.get("style") in ("emphasis", "funny"):
+                add(t["start_id"], f"テロップ: {t.get('text', '')}")
+        for z in plan.get("zooms", []):
+            add(z["id"], "ズーム")
     out: list[tuple[float, str]] = []
-    for t, why in want:
-        if all(abs(t - u) > 4 for u, _ in out) and tl.map_time(t) is not None:
+
+    def take(t, why):
+        if t is not None and all(abs(t - u) > CAND_GAP for u, _ in out) and all(abs(t - a) > avoid_gap for a in avoid) \
+                and tl.map_time(t) is not None:
             out.append((t, why))
-        if len(out) >= N_CANDIDATES:
+    for t, why in pri:
+        if len(out) >= min(N_PRIORITY, n // 2):
             break
+        take(t, why)
+    # 残りは動画全体から均等に（完成の時刻で）。最後まで行き渡るよう、残りの数で割る。
+    # 近すぎて使えなかった分は、その間の位置で補う
+    total, m = tl.duration, max(1, n - len(out))
+    for half in (0.0, 0.5):
+        for k in range(m):
+            if len(out) >= n:
+                return out
+            take(source_at(tl, total * ((k + phase + half) % m) / m), "全体から")
     return out
 
 
-def extract_candidates(src: SourceSet, times, work: Path, key=None) -> list[dict]:
+def extract_candidates(src: SourceSet, times, work: Path, key=None, start: int = 1,
+                       offsets=(0.0, -0.4, 0.4), drop_blur: bool = True) -> list[dict]:
+    """候補の静止画を取り出す（work/cand_NN.jpg。NN は start から）。t は実際に使った静止画の元素材の時刻。
+    drop_blur: ブレが大きいもの（中央値の25%未満）は除く（番号 no は 1 からつけ直す）"""
     work.mkdir(parents=True, exist_ok=True)
     cands = []
-    for i, (t, why) in enumerate(times, 1):
+    for i, (t, why) in enumerate(times, start):
         best = None
-        for dt in (0.0, -0.4, 0.4):   # 少しずらした3枚から一番くっきりしたものを使う
+        for dt in offsets:   # 少しずらした数枚から一番くっきりしたものを使う
             fi_list = src.split(t + dt, t + dt + 0.05)
             if not fi_list:
                 continue
@@ -203,18 +230,95 @@ def extract_candidates(src: SourceSet, times, work: Path, key=None) -> list[dict
                 sc = sharpness(img)
                 k = key(img, sc) if key else sc   # key: 目が開いている顔を優先する（rc_thumbspro）
                 if best is None or k > best[2]:
-                    best = (sc, img, k)
+                    best = (sc, img, k, t + dt)
+            f.unlink(missing_ok=True)
         if best:
             path = work / f"cand_{i:02d}.jpg"
             best[1].save(path, quality=92)
-            cands.append({"no": len(cands) + 1, "t": t, "why": why, "sharp": best[0], "path": path})
-    # ブレが大きいもの（中央値の25%未満）は除く
-    if cands:
+            cands.append({"no": len(cands) + 1, "t": round(best[3], 3), "why": why, "sharp": best[0], "path": path})
+    if cands and drop_blur:
         med = float(np.median([c["sharp"] for c in cands]))
         cands = [c for c in cands if c["sharp"] >= med * 0.25] or cands
         for k, c in enumerate(cands, 1):
             c["no"] = k
     return cands
+
+
+# ---------------- 候補のまとまり（thumbnails/candidates.json） ----------------
+# 指示して作り直す・場面を選んで作るときは、同じ候補を使い回す（同じ静止画・同じ番号）。
+# カットや早送りを変えたら（sig が変わったら）作り直す。
+
+def _pool_sig(sess: dict, plan: dict) -> str:
+    import hashlib
+    key = json.dumps([sess.get("inputs"), sess.get("keep"), (plan or {}).get("speedups") or []],
+                     ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.md5(key.encode("utf-8")).hexdigest()
+
+
+def intro_offset(out_dir: Path) -> float:
+    """完成動画の頭のオープニングの長さ（完成動画の時刻 = オープニング + 本編の時刻）"""
+    try:
+        return float(json.loads((out_dir / "final_info.json").read_text(encoding="utf-8")).get("intro_offset") or 0.0)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return 0.0
+
+
+def video_time(tl, t: float, intro: float = 0.0) -> float:
+    """元素材の時刻 → 完成動画の時刻"""
+    return round(intro + tl.map_time_nearest(t), 2)
+
+
+def load_pool(tdir: Path) -> dict:
+    """候補のまとまり {"sig", "round", "cands": [{"no", "t", "ot", "why", "sharp", "file"}]}（無ければ空）"""
+    try:
+        pool = json.loads((tdir / "candidates.json").read_text(encoding="utf-8"))
+        return pool if isinstance(pool, dict) and isinstance(pool.get("cands"), list) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_pool(tdir: Path, sig: str, rnd: int, cands: list[dict]):
+    tdir.mkdir(parents=True, exist_ok=True)
+    keep = ("no", "t", "ot", "why", "sharp")
+    data = {"sig": sig, "round": rnd,
+            "cands": [{**{k: c[k] for k in keep if k in c}, "file": Path(c["path"]).name} for c in cands]}
+    (tdir / "candidates.json").write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def _pool_cands(pool: dict, work: Path) -> list[dict]:
+    out = []
+    for c in pool.get("cands", []):
+        p = work / str(c.get("file", ""))
+        if p.exists() and "t" in c and "no" in c:
+            out.append({k: c[k] for k in ("no", "t", "ot", "why", "sharp") if k in c} | {"path": p})
+    return out
+
+
+def parse_times(s: str) -> list[float]:
+    """「1:23, 4:56」「83.5」「1:02:03」などを秒に。読めない書き方は ValueError"""
+    out = []
+    for tok in re.split(r"[,、，\s]+", (s or "").strip()):
+        if not tok:
+            continue
+        tok = tok.replace("：", ":")
+        parts = tok.split(":")
+        try:
+            if len(parts) > 3 or not all(parts):
+                raise ValueError
+            sec = 0.0
+            for x in parts:
+                sec = sec * 60 + float(x)
+            if sec < 0:
+                raise ValueError
+        except ValueError:
+            raise ValueError(f"時刻「{tok}」が読めません（例: 1:23 や 83.5）") from None
+        out.append(sec)
+    return out
+
+
+def fmt_time(sec: float) -> str:
+    sec = max(0, int(round(sec)))
+    return f"{sec // 3600}:{sec // 60 % 60:02d}:{sec % 60:02d}" if sec >= 3600 else f"{sec // 60}:{sec % 60:02d}"
 
 
 # ---------------- AIで選ぶ ----------------
@@ -341,16 +445,30 @@ def _request_content(request: str, prev: dict | None, cands) -> list[dict]:
     return blocks
 
 
+MUST_PROMPT = """使う人が選んだ場面:
+- 候補{nos} は、使う人が自分で選んだ場面です。必ず全部、この順で1番目から使う（画像が多少暗くても使う。文字・デザインで良く見せる）
+{rest}"""
+
+
+def _must_prompt(must) -> str:
+    if not must:
+        return ""
+    rest = "- 残りの{}枚は、ほかの候補から選ぶ（選んだ場面と違う場面を）\n".format(3 - len(must)) if len(must) < 3 else ""
+    return MUST_PROMPT.format(nos="・".join(f"候補{no}" for no in must).replace("候補", "", 1), rest=rest)
+
+
 def pick_with_ai(cands, title: str, text_ideas: list[str], mode: str, effort: str, style: str = "", art: bool = False,
-                 request: str = "", prev: dict | None = None):
+                 request: str = "", prev: dict | None = None, must=()):
     """Claude に候補画像を見せて3枚を選んでもらう。art=True なら、デザイン（強調・バッジ・効果・組み合わせ）も決めてもらう。
-    request: 作り直すときの指示（prev: 前回の案。_previous）"""
+    request: 作り直すときの指示（prev: 前回の案。_previous）。must: 使う人が選んだ場面（候補の番号）。必ず使う"""
     import rc_llm
     anthropic, client = rc_llm._client()
     content = []
+    must = [no for no in must if any(c["no"] == no for c in cands)][:3]
     for c in cands:
         note = f"／{c['note']}" if c.get("note") else ""   # 顔の様子（rc_thumbspro）
-        content.append({"type": "text", "text": f"候補{c['no']}（{c['why']}{note}）"})
+        mine = "使う人が選んだ場面／" if c["no"] in must else ""
+        content.append({"type": "text", "text": f"候補{c['no']}（{mine}{c['why']}{note}）"})
         content.append(_image_block(c["path"]))
     content.append({"type": "text", "text": f"動画のタイトル案: {title}\n文字の案: {'、'.join(text_ideas) or '（なし）'}"})
     if request:
@@ -360,6 +478,8 @@ def pick_with_ai(cands, title: str, text_ideas: list[str], mode: str, effort: st
 
 選ぶ基準:
 - 表情がいい（目をつぶっていない、口が変な形で止まっていない）、または商品・作品・景色がはっきり写っている
+- 一覧で小さく見ても何の動画か分かる場面を優先する（商品・作品のアップ、手に取って見せている所、数字や結果が見える所、
+  完成の瞬間など）。ただ話しているだけの場面・何が写っているか分かりにくい場面より、見て分かる場面を選ぶ
 - ブレていない、暗すぎない
 - 3枚はなるべく違う場面から選ぶ
 文字:
@@ -376,7 +496,7 @@ def pick_with_ai(cands, title: str, text_ideas: list[str], mode: str, effort: st
 - 大事な所の枠の中で、特に隠してはいけない物（はかりの表示・ロゴ・顔・ペンなど）を1つずつ、ぴったり囲む（0〜3個）。
   斜めに置いた細長い物は、物の向きに沿って2つに分けて囲んでもよい。文字はこれを避け、枠の中の平らな所（台・箱の面など）には置いてよい
 - YouTube では画面の右下（横の右から2割・縦の下から15%くらい）に動画の長さが重ねて表示されて隠れる。大事な所がそこに来る画像は避ける
-{ART_PROMPT if art else ""}{(REQUEST_PROMPT + (REQUEST_ART if art else "")) if request else ""}出力はJSONのみです。"""
+{ART_PROMPT if art else ""}{(REQUEST_PROMPT + (REQUEST_ART if art else "")) if request else ""}{_must_prompt(must)}出力はJSONのみです。"""
     usage = {"in": 0, "out": 0}
     res = rc_llm._call(client, anthropic, system, content, pick_schema(art), effort, usage)
     nos = {c["no"] for c in cands}
@@ -1559,10 +1679,74 @@ def _compose_set(frame, p: dict, lays: list[str], tpl, font, design: dict, keeps
     return sorted(good, key=lambda m: order[m[0]])
 
 
+def _plan(out_dir: Path) -> dict:
+    for name in ("plan_edited.json", "plan_used.json"):
+        if (out_dir / name).exists():
+            return json.loads((out_dir / name).read_text(encoding="utf-8"))
+    return {}
+
+
+def pool_valid(out_dir: Path) -> bool:
+    """候補のまとまり（candidates.json）が、今のカット・早送りのものか（場面を選ぶ画面で使ってよいか）"""
+    try:
+        sess = json.loads((out_dir / "session.json").read_text(encoding="utf-8"))
+        return load_pool(out_dir / "thumbnails").get("sig") == _pool_sig(sess, _plan(out_dir))
+    except (OSError, ValueError):
+        return False
+
+
+def _session(out_dir: Path):
+    """荒編集の結果（session・発言・判定・演出プラン）と、完成動画の時刻に合わせたタイムライン（早送りも入れる）"""
+    sess = json.loads((out_dir / "session.json").read_text(encoding="utf-8"))
+    chunks = {c["id"]: c for c in json.loads((out_dir / "chunks.json").read_text(encoding="utf-8"))}
+    decisions = json.loads((out_dir / "decisions_used.json").read_text(encoding="utf-8")) \
+        if (out_dir / "decisions_used.json").exists() else {}
+    plan = _plan(out_dir)
+    src = SourceSet([probe(Path(p)) for p in sess["inputs"]])
+    tl = Timeline(src, [tuple(k) for k in sess["keep"]], src.main.fps)
+    import rc_speedup
+    tl = rc_speedup.wrap(tl, plan)   # 早送りがあれば、完成動画の時刻で均等に候補を選ぶ
+    return sess, chunks, decisions, plan, src, tl
+
+
+def _used_times(tdir: Path) -> list[float]:
+    """今のサムネイル案に使っている場面（元素材の時刻）"""
+    try:
+        info = json.loads((tdir / "thumbnails.json").read_text(encoding="utf-8"))
+        return [float(i["source_time"]) for i in info if isinstance(i, dict) and i.get("source_time") is not None]
+    except (OSError, ValueError, TypeError):
+        return []
+
+
+def _next_file_no(cands) -> int:
+    return 1 + max((int(Path(c["path"]).stem.split("_")[-1]) for c in cands), default=0)
+
+
+def _clear_candidates(work: Path):
+    for f in work.glob("cand_*.jpg") if work.exists() else []:
+        f.unlink(missing_ok=True)
+
+
+def _force(picks: list[dict], must: list[int], texts: list[str]) -> list[dict]:
+    """使う人が選んだ場面（must）を、この順で必ず先頭に。残りはAI（または自動）の案から（全部で3つまで）"""
+    out = []
+    for no in must:
+        p = next((p for p in picks if p.get("frame") == no), None)
+        if p is None:   # AIが使わなかった（ふつうは無い）: 文字は1つ目の案から借り、大事な所の枠はなし
+            base = picks[0] if picks else {}
+            p = {"frame": no, "text": base.get("text") or texts[0], "label": base.get("label", ""),
+                 "text_position": "any", "subject_box": None, "reason": "選んだ場面"}
+        out.append(p)
+    out += [p for p in picks if p.get("frame") not in must][:max(0, 3 - len(out))]
+    return out[:3]
+
+
 def generate(out_dir: Path, tpl: Template, llm: str = "api", effort: str | None = None,
-             custom_text: str | None = None, request: str = "") -> list[Path]:
+             custom_text: str | None = None, request: str = "", scenes=None, fresh: bool = False) -> list[Path]:
     """サムネイル案を作る。effort: AIの考える深さ（None ならテンプレートの [thumbnail] の effort。初期値 high）。
-    request: 今のサムネイル案を見て、AIに指示して作り直す（「案2は文字を左に」「もっと明るく」など。llm="api" のとき）"""
+    request: 今のサムネイル案を見て、AIに指示して作り直す（「案2は文字を左に」「もっと明るく」など。llm="api" のとき）。
+    scenes: 使う場面（完成動画の時刻・秒。3つまで。この順で案1から）。足りない分は、AI（または自動）がほかの候補から選ぶ。
+    fresh: 今の案に使っている場面を外し、新しく取り出した場面から選び直す"""
     import rc_thumbart as A
     request = " ".join((request or "").split())
     if request and llm != "api":
@@ -1570,59 +1754,97 @@ def generate(out_dir: Path, tpl: Template, llm: str = "api", effort: str | None 
         request = ""
     effort = effort if effort in EFFORTS else thumb_effort(tpl)
     art = art_director(tpl)
-    sess = json.loads((out_dir / "session.json").read_text(encoding="utf-8"))
-    chunks = {c["id"]: c for c in json.loads((out_dir / "chunks.json").read_text(encoding="utf-8"))}
-    decisions = json.loads((out_dir / "decisions_used.json").read_text(encoding="utf-8")) \
-        if (out_dir / "decisions_used.json").exists() else {}
-    plan = {}
-    for name in ("plan_edited.json", "plan_used.json"):
-        if (out_dir / name).exists():
-            plan = json.loads((out_dir / name).read_text(encoding="utf-8"))
-            break
+    sess, chunks, decisions, plan, src, tl = _session(out_dir)
     meta = sess.get("meta") or {}
     title = (meta.get("titles") or [""])[0]
     ideas = meta.get("thumbnail_texts") or []
-
-    src = SourceSet([probe(Path(p)) for p in sess["inputs"]])
-    tl = Timeline(src, [tuple(k) for k in sess["keep"]], src.main.fps)
-    import rc_speedup
-    tl = rc_speedup.wrap(tl, plan)   # 早送りがあれば、完成動画の時刻で均等に候補を選ぶ
     tdir = out_dir / "thumbnails"
     work = tdir / "_candidates"
     prev = _previous(tdir) if request else None   # 前回の案（画像は消す前に読み込む）
+    used = _used_times(tdir) if fresh else []
+    intro = intro_offset(out_dir)
     print("■ サムネイル案")
-    print("  候補の場面を取り出しています…", flush=True)
     pro = _pro(tpl)   # 顔で選ぶ・人物の切り抜き（rc_thumbspro。使えなければ None）
-    cands = extract_candidates(src, candidate_times(sess, tl, chunks, decisions, plan), work,
-                               pro.frame_key if pro else None)
+    key = pro.frame_key if pro else None
+
+    # 候補: 指示・文字・場面の指定で作り直すときは、前と同じ候補を使い回す（カット・早送りを変えていなければ）
+    sig, pool = _pool_sig(sess, plan), load_pool(tdir)
+    same = pool.get("sig") == sig
+    cands = _pool_cands(pool, work) if same and not fresh and (request or custom_text or scenes) else []
+    rnd = int(pool.get("round", 0) or 0) if cands else 0
+    if not cands:
+        if fresh and same:
+            rnd = int(pool.get("round", 0) or 0) + 1   # 均等に取る位置もずらす
+        print(f"  候補の場面を取り出しています{'（今の案とは別の場面から）' if fresh else ''}…", flush=True)
+        _clear_candidates(work)
+        times = candidate_times(sess, tl, chunks, decisions, plan, phase=PHASES[rnd % len(PHASES)], avoid=used)
+        if fresh and len(times) < 3:   # 短い動画で、別の場面がほとんど無い
+            print("  [注意] 今の案と別の場面がほとんど無いので、動画全体から選び直します")
+            times = candidate_times(sess, tl, chunks, decisions, plan, phase=PHASES[rnd % len(PHASES)])
+        cands = extract_candidates(src, times, work, key)
+    # 使う人が選んだ場面（完成動画の時刻）。候補にあればそれを、無ければその時刻の静止画を取り出す
+    must: list[int] = []
+    for ot in list(scenes or [])[:3]:
+        t = source_at(tl, max(0.0, float(ot) - intro))
+        c = next((c for c in cands if t is not None and abs(c["t"] - t) < 0.3), None)
+        if c is None and t is not None:
+            new = extract_candidates(src, [(t, f"選んだ場面（{fmt_time(ot)}）")], work, key, start=_next_file_no(cands),
+                                     offsets=(0.0, -0.2, 0.2), drop_blur=False)
+            if new:
+                c = {**new[0], "no": max((x["no"] for x in cands), default=0) + 1}
+                cands.append(c)
+        if c is None:
+            print(f"  [注意] {fmt_time(ot)} の場面を取り出せませんでした")
+        elif c["no"] not in must:
+            must.append(c["no"])
+    if scenes and not must:
+        raise SystemExit("[エラー] 指定した時刻の場面を取り出せませんでした。")
     if not cands:
         raise SystemExit("[エラー] 候補の静止画を取り出せませんでした。")
+    for c in cands:
+        c["ot"] = video_time(tl, c["t"], intro)
+    _save_pool(tdir, sig, rnd, cands)
+    if must:
+        print("  使う場面: " + "、".join(fmt_time(c["ot"]) for no in must for c in cands if c["no"] == no))
+
+    # AIに見せる候補: 選んだ場面（3つなら、それだけ）と、ほかの候補（選んだ場面のすぐ近くは除く）。多すぎるときは絞る
+    mine = [c for no in must for c in cands if c["no"] == no]
+    others = [c for c in cands if c["no"] not in must and all(abs(c["t"] - m["t"]) > 2 for m in mine)]
+    if len(must) >= 3:
+        others = []
+    elif len(others) > N_CANDIDATES:
+        keep_t = [float(r["meta"]["source_time"]) for r in (prev or {}).get("rows", [])
+                  if r["meta"].get("source_time") is not None]
+        first = [c for c in others if any(abs(c["t"] - t) < 0.05 for t in keep_t)]   # 前回の案の場面は残す
+        others = first + [c for c in others if c not in first][:max(0, N_CANDIDATES - len(first))]
+    ai_cands = sorted(mine + others, key=lambda c: c["no"])
     if pro:
-        cands = pro.annotate(cands)
+        ai_cands = pro.annotate(ai_cands)
 
     usage, asked = None, False
-    if llm == "api" and (request or not custom_text):
+    texts = [custom_text] if custom_text else (ideas or [title or "タイトル"])
+    if llm == "api" and (request or must or not custom_text):
         if request:
             print(f"  Claudeが指示に合わせて作り直しています（指示: {request}）…", flush=True)
-        print(f"  Claudeが候補{len(cands)}枚から選んでいます（考える深さ: {effort}"
+        print(f"  Claudeが候補{len(ai_cands)}枚から選んでいます（考える深さ: {effort}"
               f"{'・デザインもおまかせ' if art else ''}）…", flush=True)
         try:
-            picks, usage = pick_with_ai(cands, title, ideas, sess.get("mode", "talk"), effort,
-                                        text_style(tpl)["label"], art, request, prev)
+            picks, usage = pick_with_ai(ai_cands, title, ideas, sess.get("mode", "talk"), effort,
+                                        text_style(tpl)["label"], art, request, prev, must)
         except Exception as e:  # noqa: BLE001
             print(f"  [注意] AIでの選択に失敗したので、自動で選びます: {e}")
             picks = []
         asked = bool(picks)
         if not picks:
-            picks = pick_simple(cands, ideas, title)
-        if custom_text:
-            for p in picks:
-                p["text"] = custom_text
+            picks = pick_simple(ai_cands, ideas, title)
     else:
-        picks = pick_simple(cands, [custom_text] if custom_text else ideas, title)
-        if custom_text:
-            for p in picks:
-                p["text"] = custom_text
+        picks = pick_simple(ai_cands, texts, title)
+    if must:
+        picks = _force(picks, must, texts)
+    if custom_text:
+        for p in picks:
+            p["text"] = custom_text
+    cands = ai_cands
 
     font = find_font(tpl)
     layouts = tpl.get("thumbnail", {}).get("layouts", ["bottom", "band", "side"])
@@ -1654,7 +1876,8 @@ def generate(out_dir: Path, tpl: Template, llm: str = "api", effort: str | None 
                      **({"keep_boxes": p["keep_boxes"]} if p.get("keep_boxes") else {}),
                      **({k: design.get(k, "") for k in ("emphasis", "badge", "effect", "shade")} if design else {}),
                      "layouts": lays, "reason": p.get("reason", ""),
-                     "source_time": round(by_no[p["frame"]]["t"], 2)})
+                     "source_time": round(by_no[p["frame"]]["t"], 2), "video_time": by_no[p["frame"]].get("ot"),
+                     **({"chosen": True} if p["frame"] in must else {})})
     (tdir / "thumbnails.json").write_text(json.dumps(info, ensure_ascii=False, indent=1), encoding="utf-8")
     # 反映した指示を残す（次に指示するとき、AIが前の指示も守れるように）。指示なしで作り直したら、まっさらに戻す
     req_file = tdir / "requests.json"
@@ -1670,3 +1893,30 @@ def generate(out_dir: Path, tpl: Template, llm: str = "api", effort: str | None 
         import rc_llm
         print(f"  Claude API: {rc_llm.cost_text(usage)}")
     return outs
+
+
+def more_scenes(out_dir: Path, tpl: Template, n: int = N_CANDIDATES) -> list[dict]:
+    """場面を選ぶ画面の候補を増やす。今の候補とは別の所を、動画全体から均等に n 枚足す（サムネイル案は作り直さない）"""
+    sess, chunks, decisions, plan, src, tl = _session(out_dir)
+    tdir = out_dir / "thumbnails"
+    work = tdir / "_candidates"
+    sig, pool = _pool_sig(sess, plan), load_pool(tdir)
+    cands = _pool_cands(pool, work) if pool.get("sig") == sig else []
+    if not cands:
+        _clear_candidates(work)
+    rnd = int(pool.get("round", 0) or 0) + 1 if cands else 0
+    print("■ サムネイルの場面を増やす")
+    print(f"  動画全体から、今の候補とは別の場面を取り出しています（{n}か所）…", flush=True)
+    pro = _pro(tpl)
+    times = candidate_times(sess, tl, chunks, decisions, plan, n=n, phase=PHASES[rnd % len(PHASES)],
+                            avoid=[c["t"] for c in cands], avoid_gap=CAND_GAP, priority=not cands)
+    new = extract_candidates(src, times, work, pro.frame_key if pro else None, start=_next_file_no(cands))
+    base = max((c["no"] for c in cands), default=0)
+    intro = intro_offset(out_dir)
+    for k, c in enumerate(new, 1):
+        c["no"] = base + k
+    for c in cands + new:
+        c["ot"] = video_time(tl, c["t"], intro)
+    _save_pool(tdir, sig, rnd, cands + new)
+    print(f"  {len(new)}枚の場面を足しました（全部で{len(cands) + len(new)}枚）")
+    return new

@@ -18,6 +18,7 @@
   - 屋外モードで反映しても「カット候補」の印が残る
   - 章カードを避けてずらしたテロップに合わせて効果音を鳴らす
   - サムネイル案の画面から、AIに指示して作り直す（thumbs.py --request。AIが「Claude APIで自動」のときだけ）（GUI）
+  - サムネイルの場面を選ぶ画面（3つまで・時刻でも指定）・別の場面から選び直す・場面を増やす（GUI）
 """
 from __future__ import annotations
 
@@ -571,7 +572,7 @@ td.request.setText("  案2は文字を左に ")
 td.b_ask.click()
 rv.thumbnails = real_thumbs
 res["ask_made"] = any("反映ずみの指示: 文字を大きく" in c.text() for c in td.findChildren(gui.QLabel))
-res["ask_call"] = asked
+res["ask_call"] = list(asked)
 started = []
 real_start2, real_key = w.runner.start, w.check_api_key
 w.runner.start = lambda script, args, *a, **k: started.append([script] + list(args))
@@ -580,6 +581,40 @@ rv.thumbnails(request="案2は文字を左に")
 w.runner.start, w.check_api_key = real_start2, real_key
 res["ask_args"] = started[-1] if started else []
 (out / "thumbnails" / "requests.json").unlink()
+
+# --- サムネイルの場面を選ぶ画面（候補を並べて、3つまで選ぶ・時刻でも指定）---
+td = gui.ThumbDialog(rv, out / "thumbnails")
+res["scene_buttons"] = td.b_scenes.isEnabled() and td.b_again.isEnabled()
+td.reject()
+import rc_thumb
+res["pool_ok"] = rc_thumb.pool_valid(out)
+sd = gui.SceneDialog(rv, out / "thumbnails")
+res["scene_tiles"] = len(sd.tiles)
+for b in sd.tiles[:4]:
+    b.click()
+res["scene_marks"] = [b.text()[:1] for b in sd.order]
+res["scene_limit"] = len(sd.order) == min(3, len(sd.tiles)) and (len(sd.tiles) < 4 or not sd.tiles[3].isChecked())
+want = [round(float(b.property("ot")), 3) for b in sd.order]
+asked.clear()
+rv.thumbnails = lambda **k: asked.append(k)
+sd.times.setText("1:2x")
+sd.b_make.click()
+res["scene_bad_time"] = not asked and "1:2x" in sd.status.text()
+sd.times.setText("")
+sd.b_make.click()
+rv.thumbnails = real_thumbs
+res["scene_call"] = [[round(t, 3) for t in a.get("scenes", [])] for a in asked] == [want]
+started.clear()
+keys = []
+w.runner.start = lambda script, args, *a, **k: started.append([script] + list(args))
+w.check_api_key = lambda *a, **k: keys.append(1) or True
+rv.thumbnails(scenes=[83.5, 125.0])
+rv.thumbnails(fresh=True)
+n_keys = len(keys)
+rv.thumbnails(more=True)
+w.runner.start, w.check_api_key = real_start2, real_key
+res["scene_args"] = started
+res["more_no_key"] = len(keys) == n_keys == 2
 w.create.llm.setCurrentIndex(w.create.llm.findData("none"))
 print("RESULT " + json.dumps(res, ensure_ascii=False))
 '''
@@ -592,6 +627,10 @@ def t_gui(check, out: Path, fx: Path):
     shutil.copytree(out, gd, ignore=shutil.ignore_patterns("work"))
     shutil.copy(fx / "plan.json", gd / "plan_used.json")
     (gd / "plan_edited.json").unlink(missing_ok=True)
+    import rc_thumb
+    if (gd / "thumbnails").exists() and not rc_thumb.pool_valid(gd):   # 場面の一覧（前の版で作った結果には無い）
+        from rc_template import Template
+        rc_thumb.more_scenes(gd, Template(fx / "tpl"), 6)
     code = f"ROOT = {str(ROOT)!r}\nOUT = {str(gd)!r}\n" + GUI_CODE
     env = dict(os.environ, APPDATA=str(fx / "appdata"), PYTHONIOENCODING="utf-8", XDG_CONFIG_HOME=str(fx / "appdata"), AVE_SETTINGS_DIR=str(fx / "appdata"))
     env.pop("ANTHROPIC_API_KEY", None)
@@ -633,6 +672,16 @@ def t_gui(check, out: Path, fx: Path):
     a = r["ask_args"]
     check("GUI: 指示は thumbs.py --request で渡す", a[:1] == ["thumbs.py"] and "--request" in a
           and a[a.index("--request") + 1] == "案2は文字を左に" and "--text" not in a, str(a))
+    check("GUI: サムネイル画面に「場面を選んで作り直す」「別の場面から選び直す」", r["scene_buttons"])
+    check("GUI: 場面を選ぶ画面に、動画から取り出した場面を並べる（今のカットの候補）",
+          r["pool_ok"] and r["scene_tiles"] > 0, f"{r['pool_ok']} {r['scene_tiles']}")
+    check("GUI: 場面は3つまで、選んだ順に①②③", r["scene_limit"] and r["scene_marks"] == list("①②③")[:len(r["scene_marks"])]
+          and r["scene_marks"], str(r["scene_marks"]))
+    check("GUI: 読めない時刻は知らせて作らない。選んだ場面で作る", r["scene_bad_time"] and r["scene_call"], str(r["scene_call"]))
+    sa = r["scene_args"]
+    check("GUI: thumbs.py に --scenes（完成動画の時刻）・--fresh・--more-scenes を渡す（場面を増やすだけならAPIキーは見ない）",
+          len(sa) == 3 and sa[0][sa[0].index("--scenes") + 1] == "83.500,125.000" and "--fresh" in sa[1]
+          and "--more-scenes" in sa[2] and r["more_no_key"], str(sa))
 
 
 # ---------------------------------------------------------------- まとめ

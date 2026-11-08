@@ -12,13 +12,13 @@ import sys
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QProcess, QProcessEnvironment, QSettings, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QBrush, QColor, QDesktopServices, QFont, QGuiApplication, QPixmap
+from PySide6.QtCore import QProcess, QProcessEnvironment, QSettings, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QBrush, QColor, QDesktopServices, QFont, QGuiApplication, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QRadioButton,
-    QSpinBox, QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QToolButton, QVBoxLayout, QWidget,
+    QScrollArea, QSpinBox, QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
 try:
@@ -880,7 +880,10 @@ class ThumbDialog(QDialog):
         for r, (no, files) in enumerate(rc_thumb.grid_files(tdir).items()):
             meta = next((i for i in info if str(i.get("image")) == no), {})
             look = rc_thumbart.describe(meta)
-            cap = QLabel(f"案{no}：「{meta.get('text', '').replace(chr(92) + 'n', ' ').replace(chr(10), ' ')}」  "
+            when = ""
+            if meta.get("video_time") is not None:   # 完成動画のどこの場面か
+                when = f"（{rc_thumb.fmt_time(meta['video_time'])}{'・選んだ場面' if meta.get('chosen') else ''}）"
+            cap = QLabel(f"案{no}{when}：「{meta.get('text', '').replace(chr(92) + 'n', ' ').replace(chr(10), ' ')}」  "
                          f"{meta.get('reason', '')}"
                          + (f"\n　デザイン: {look}" if look else ""))
             cap.setStyleSheet("font-weight: bold; margin-top: 6px;")
@@ -905,7 +908,7 @@ class ThumbDialog(QDialog):
         self.b_ask.clicked.connect(self._ask)
         if api:
             self.b_ask.setToolTip("今の案の画像と、これまでの指示もAIに見せて作り直します（指示は積み重なります。"
-                                  "「AIに選び直してもらう」でまっさらに戻ります）")
+                                  "「別の場面から選び直す」などで作り直すと、まっさらに戻ります）")
         else:
             for w in (self.request, self.b_ask):
                 w.setEnabled(False)
@@ -918,19 +921,28 @@ class ThumbDialog(QDialog):
         self.text.setPlaceholderText("自分で文字を決めて作り直す（例: 軽すぎ！　2行にするときは \\n で区切る）")
         redo = QPushButton("この文字で作り直す")
         redo.clicked.connect(self._redo)
-        again = QPushButton("AIに選び直してもらう")
-        again.clicked.connect(lambda: (self.accept(), self.page.thumbnails(text="")))
-        if not api:
-            again.setEnabled(False)
-            again.setToolTip("「作成」タブの AI を「Claude APIで自動」にすると、AIが画像を見て選び直します。")
+        row.addWidget(self.text, 1)
+        row.addWidget(redo)
+        lay.addLayout(row)
+        # 場面を変える: 自分で選ぶ / 今の案とは別の場面から選び直す
+        row2 = QHBoxLayout()
+        self.b_scenes = QPushButton("場面を選んで作り直す…")
+        self.b_scenes.setToolTip("動画から取り出した場面を並べて表示します。使いたい場面を選ぶか、完成動画の時刻で指定できます。")
+        self.b_scenes.clicked.connect(lambda: (self.accept(), SceneDialog(self.page, tdir).exec()))
+        self.b_again = QPushButton("別の場面から選び直す" + ("（AI）" if api else ""))
+        self.b_again.setToolTip("今の案に使っている場面を外し、動画全体から新しく取り出した場面から"
+                                + ("AIが選び直します。" if api else "選び直します（AIなしなので、くっきりした場面を自動で）。"))
+        self.b_again.clicked.connect(lambda: (self.accept(), self.page.thumbnails(fresh=True)))
         folder = QPushButton("フォルダを開く")
         folder.clicked.connect(lambda: open_path(tdir))
         close = QPushButton("閉じる")
         close.clicked.connect(self.accept)
-        row.addWidget(self.text, 1)
-        for b in (redo, again, folder, close):
-            row.addWidget(b)
-        lay.addLayout(row)
+        for b in (self.b_scenes, self.b_again):
+            row2.addWidget(b)
+        row2.addStretch(1)
+        for b in (folder, close):
+            row2.addWidget(b)
+        lay.addLayout(row2)
 
     def _redo(self):
         t = self.text.text().strip()
@@ -943,6 +955,131 @@ class ThumbDialog(QDialog):
         if t and self.b_ask.isEnabled():
             self.accept()
             self.page.thumbnails(request=t)
+
+
+class SceneDialog(QDialog):
+    """サムネイルに使う場面を選ぶ。動画から取り出した場面（thumbnails/candidates.json）を、完成動画の時刻の順に並べる。
+    完成動画の時刻を入れても選べる。足りない分は、AI（AIなしなら自動）がほかの場面から選ぶ"""
+    MAX = 3
+    MARKS = "①②③"
+
+    def __init__(self, page: "ReviewPage", tdir: Path):
+        super().__init__(page)
+        import rc_thumb
+        self.T = rc_thumb
+        self.page = page
+        self.setWindowTitle("サムネイルの場面を選ぶ")
+        self.resize(1240, 860)
+        lay = QVBoxLayout(self)
+        api = page.win.create.llm.currentData() == "api"
+        lay.addWidget(QLabel(
+            "サムネイルに使いたい場面をクリックして選んでください（3つまで。選んだ順に案1・案2・案3になります。もう一度押すと外れます）。\n"
+            + ("文字とデザインはAIが付けます。" if api else "文字は動画のタイトル案から付けます。")
+            + "選んだ場面が3つより少ないときは、残りを" + ("AIが" if api else "自動で") + "ほかの場面から選びます。"))
+        pool = rc_thumb.load_pool(tdir) if rc_thumb.pool_valid(page.out) else {}
+        work = tdir / "_candidates"
+        cands = sorted((c for c in pool.get("cands", []) if (work / str(c.get("file", ""))).exists()),
+                       key=lambda c: c.get("ot", 0))
+        used = rc_thumb._used_times(tdir)
+        self.order: list[QToolButton] = []
+        self.tiles: list[QToolButton] = []
+        if cands:
+            box = QWidget()
+            grid = QGridLayout(box)
+            grid.setSpacing(8)
+            for k, c in enumerate(cands):
+                b = QToolButton()
+                b.setCheckable(True)
+                b.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+                b.setIcon(QIcon(QPixmap(str(work / c["file"])).scaledToWidth(272, Qt.SmoothTransformation)))
+                b.setIconSize(QSize(272, 153))
+                now = any(abs(float(c["t"]) - u) < 0.05 for u in used)
+                b.setProperty("ot", float(c.get("ot", 0.0)))
+                b.setProperty("cap", f"{rc_thumb.fmt_time(c.get('ot', 0))}{'（今の案）' if now else ''}")
+                b.setText(b.property("cap"))
+                b.setToolTip(f"{c.get('why', '')}（右クリックで大きく開く）")
+                b.setStyleSheet("QToolButton { border: 3px solid transparent; padding: 2px; }"
+                                "QToolButton:checked { border: 3px solid #e09a00; background: #fff3d6; font-weight: bold; }")
+                b.toggled.connect(lambda on, b=b: self._toggle(b, on))
+                b.setContextMenuPolicy(Qt.CustomContextMenu)
+                b.customContextMenuRequested.connect(lambda _p, f=work / c["file"]: open_path(f))
+                grid.addWidget(b, k // 4, k % 4)
+                self.tiles.append(b)
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setWidget(box)
+            lay.addWidget(scroll, 1)
+        else:
+            empty = QLabel("場面の一覧がまだありません（カットを変えたときも作り直しが要ります）。"
+                           "「ほかの場面も出す」を押すと、動画全体から場面を取り出します。")
+            empty.setWordWrap(True)
+            lay.addWidget(empty)
+            lay.addStretch(1)
+        trow = QHBoxLayout()
+        trow.addWidget(QLabel("時刻で指定:"))
+        self.times = QLineEdit()
+        self.times.setPlaceholderText("完成動画の時刻（例: 1:23, 4:56）。上で選んだ場面の後に続きます")
+        self.times.returnPressed.connect(self._make)
+        trow.addWidget(self.times, 1)
+        lay.addLayout(trow)
+        self.status = QLabel("")
+        self.status.setStyleSheet("color: #c0392b;")
+        lay.addWidget(self.status)
+        row = QHBoxLayout()
+        more = QPushButton(f"ほかの場面も出す（＋{rc_thumb.N_CANDIDATES}）")
+        more.setToolTip("今の一覧とは別の所を、動画全体から取り出して足します（サムネイル案は作り直しません）。")
+        more.clicked.connect(lambda: (self.accept(), self.page.thumbnails(more=True)))
+        self.b_make = QPushButton("選んだ場面で作る")
+        self.b_make.setDefault(True)
+        self.b_make.clicked.connect(self._make)
+        close = QPushButton("閉じる")
+        close.clicked.connect(self.reject)
+        row.addWidget(more)
+        row.addStretch(1)
+        row.addWidget(self.b_make)
+        row.addWidget(close)
+        lay.addLayout(row)
+
+    def _toggle(self, b: QToolButton, on: bool):
+        if on and b not in self.order:
+            if len(self.order) >= self.MAX:
+                b.blockSignals(True)
+                b.setChecked(False)
+                b.blockSignals(False)
+                self.status.setText(f"選べるのは{self.MAX}つまでです。外したい場面をもう一度押してください。")
+                return
+            self.order.append(b)
+        elif not on and b in self.order:
+            self.order.remove(b)
+        self.status.setText("")
+        for t in self.tiles:
+            k = self.order.index(t) if t in self.order else -1
+            t.setText((f"{self.MARKS[k]} " if k >= 0 else "") + t.property("cap"))
+
+    def scenes(self) -> list[float] | None:
+        """選んだ場面（完成動画の時刻・秒）。おかしいときは理由を出して None"""
+        out = [float(b.property("ot")) for b in self.order]
+        try:
+            typed = self.T.parse_times(self.times.text())
+        except ValueError as e:
+            self.status.setText(str(e))
+            return None
+        for t in typed:
+            if all(abs(t - u) > 0.5 for u in out):
+                out.append(t)
+        if not out:
+            self.status.setText("場面をクリックして選ぶか、時刻を入れてください。")
+            return None
+        if len(out) > self.MAX:
+            self.status.setText(f"場面は{self.MAX}つまでです（今 {len(out)}つ）。")
+            return None
+        return out
+
+    def _make(self):
+        s = self.scenes()
+        if s:
+            self.accept()
+            self.page.thumbnails(scenes=s)
 
 
 class YouTubeDialog(QDialog):
@@ -1943,16 +2080,19 @@ class ReviewPage(QWidget):
                                         "（このあとフォルダを開きます）")
                 open_path(self.out)
 
-    def thumbnails(self, text: str | None = None, request: str | None = None):
+    def thumbnails(self, text: str | None = None, request: str | None = None, scenes: list[float] | None = None,
+                   fresh: bool = False, more: bool = False):
         """サムネイル案があれば表示し、なければ作る（text 指定時は、その文字で作り直す。
-        request 指定時は、今の案を見たAIへの指示で作り直す）"""
+        request 指定時は、今の案を見たAIへの指示で作り直す。scenes: 使う場面（完成動画の時刻）で作る。
+        fresh: 今の案とは別の場面から選び直す。more: 場面を選ぶ画面の候補を増やして、その画面を開く）"""
         if not self.out:
             return
         tdir = self.out / "thumbnails"
-        if text is None and request is None and list(tdir.glob("thumb_*.jpg")):
+        if text is None and request is None and scenes is None and not (fresh or more) \
+                and list(tdir.glob("thumb_*.jpg")):
             ThumbDialog(self, tdir).exec()
             return
-        if not text and not self.win.check_api_key(self.win.create.llm.currentData()):
+        if not text and not more and not self.win.check_api_key(self.win.create.llm.currentData()):
             return
         # AIの考える深さは、テンプレートの [thumbnail] の effort（動画作成の「AIの考える深さ」とは別）
         args = [str(self.out), "--template", self._template(), "--llm", self.win.create.llm.currentData()]
@@ -1960,12 +2100,20 @@ class ReviewPage(QWidget):
             args += ["--text", text]
         if request:
             args += ["--request", request]
+        if scenes:
+            args += ["--scenes", ",".join(f"{t:.3f}" for t in scenes)]
+        if fresh:
+            args += ["--fresh"]
+        if more:
+            args += ["--more-scenes"]
 
         def done(ok):
             self._update_buttons()
-            if ok and list(tdir.glob("thumb_*.jpg")):
+            if ok and more:
+                SceneDialog(self, tdir).exec()
+            elif ok and list(tdir.glob("thumb_*.jpg")):
                 ThumbDialog(self, tdir).exec()
-        self.win.runner.start("thumbs.py", args, "サムネイル案を作成中", done)
+        self.win.runner.start("thumbs.py", args, "サムネイルの場面を増やしています" if more else "サムネイル案を作成中", done)
 
     def _update_buttons(self):
         if self.win.runner.busy:   # 処理中は押せないようにする（押せない理由が見て分かるように）
