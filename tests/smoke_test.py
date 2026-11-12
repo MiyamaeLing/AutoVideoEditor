@@ -159,6 +159,8 @@ print('gui ok')
     test_thumbart.run_all(check, out, fx)
     import test_direct   # 演出のディレクター（映像を見てテロップの位置・強調・出方とズームの中心を決める）
     test_direct.run_all(check, out, fx)
+    import test_style   # 演出のスタイル（にぎやか / 落ち着いた）の切り替え
+    test_style.run_all(check, out, fx)
 
     failed = [r for r in results if not r[1]]
     print(f"\n{len(results) - len(failed)}/{len(results)} 件 成功")

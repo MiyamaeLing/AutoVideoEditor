@@ -58,7 +58,8 @@ def use_claude_code(settings: QSettings) -> bool:
 TYPE_JA = {"retake": "言い直し", "mistake": "言い間違い", "filler": "フィラー", "offscript": "段取り・独り言",
            "other": "その他"}
 STYLE_JA = {"emphasis": "強調", "info": "補足", "warning": "注意", "funny": "ツッコミ",
-            "bubble": "吹き出し", "spec": "スペック表", "compare": "比較表", "step": "STEPカード", "place": "場所カード"}
+            "bubble": "吹き出し", "spec": "スペック表", "compare": "比較表", "step": "STEPカード", "place": "場所カード",
+            "label": "小さなラベル（左上）"}
 SE_JA = {"none": "なし", "pop": "ポンッ", "ding": "チーン", "whoosh": "シュッ", "boing": "ボヨン"}
 MOOD_JA = {"calm": "落ち着いた", "upbeat": "明るい", "tension": "緊張感", "emotional": "しんみり", "none": "BGMなし"}
 
@@ -182,6 +183,10 @@ class Runner(QWidget):
             key = self.settings.value("api_key", "")
             if key:
                 e.insert("ANTHROPIC_API_KEY", key)
+        look = str(self.settings.value("look", "") or "")   # 「作成」タブの「演出のスタイル」。空ならテンプレートのとおり
+        e.remove("ROUGHCUT_LOOK")
+        if look:
+            e.insert("ROUGHCUT_LOOK", look)
         model = str(self.settings.value("model", "") or "")   # 「作成」タブの「モデル」。空（おまかせ）なら何も足さない
         if model:
             e.insert("ROUGHCUT_MODEL", model)      # Claude API
@@ -568,6 +573,16 @@ class CreatePage(QWidget):
         self.model_label = QLabel("モデル")
         form.addRow(self.model_label, mrow)
         self.model.currentIndexChanged.connect(self._model_changed)
+        # 演出のスタイル: にぎやか（大きなテロップ・効果音・ズーム）/ 落ち着いた（小さなラベルと控えめな字幕）
+        import rc_style
+        self.look = QComboBox()
+        for k, (lid, (label, what)) in enumerate(rc_style.LOOKS.items()):
+            self.look.addItem(label, lid)
+            self.look.setItemData(k, what, Qt.ToolTipRole)
+        self.look.setCurrentIndex(max(0, self.look.findData(str(st.value("look", "") or "lively"))))
+        self.look.setToolTip("荒編集（カットの間）・演出プラン・完成動画の見た目に効きます。次に動かす処理から使います")
+        self.look.currentIndexChanged.connect(lambda *_: self.win.settings.setValue("look", self.look.currentData()))
+        form.addRow("演出のスタイル", self.look)
         self.llm.currentIndexChanged.connect(self._llm_changed)
         self._llm_changed()
 
@@ -1926,9 +1941,10 @@ class ReviewPage(QWidget):
         """表の内容を演出プランにする。チェックを外したものは "_off" に入れておく（書き出しでは使わない）"""
         plan = {"telops": [], "zooms": [], "bgm": [], "_off": {"telops": [], "zooms": []}}
         src = self._plan_source()
-        kws = (read_json(src) or {}).get("caption_keywords") if src else None
-        if kws:
-            plan["caption_keywords"] = kws   # 字幕のキーワード（表には出していないので、そのまま引き継ぐ）
+        old = (read_json(src) or {}) if src else {}
+        for key in ("caption_keywords", "caption_text", "look"):   # 表には出していないので、そのまま引き継ぐ
+            if old.get(key):                                       # （字幕のキーワード・AIが整えた字幕の文・演出のスタイル）
+                plan[key] = old[key]
         for r in range(self.t_telop.rowCount()):
             it = self.t_telop.item(r, 0)
             row = {**(it.data(Qt.UserRole + 2) or {}),

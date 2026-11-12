@@ -63,6 +63,7 @@ def parse_args():
     ap.add_argument("--finish", action="store_true", help="荒編集のあと、続けて仕上げ（演出・書き出し）まで行う")
     ap.add_argument("--template", type=Path, default=Path(__file__).parent / "templates" / "default",
                     help="仕上げに使う見た目のテンプレートフォルダ")
+    ap.add_argument("--look", choices=["lively", "calm"], help="演出のスタイル（lively=にぎやか / calm=落ち着いた）")
     ap.add_argument("--speakers", nargs="?", const="auto", metavar="人数",
                     help="（実験的）発言ごとに話者を推定して、字幕を人ごとに色分けする。人数（2 など）か auto")
     return ap.parse_args()
@@ -75,7 +76,10 @@ def main():
         if not p.exists():
             sys.exit(f"[エラー] ファイルが見つかりません: {p}")
 
-    preset = dict(PRESETS[args.mode])
+    import rc_style
+    if args.look:
+        rc_style.activate(args.look)
+    preset = rc_style.cut_preset(PRESETS[args.mode], _template_or_none(args.template))   # 落ち着いたスタイルは間を少し残す
     if args.no_ai_cuts:
         preset["apply_ai_cuts"] = False
     if args.apply_ai_cuts:

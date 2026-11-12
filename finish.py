@@ -32,6 +32,8 @@ import rc_chapters
 import rc_direct
 import rc_graphics
 import rc_llm
+import rc_polish
+import rc_style
 import rc_multicam
 import rc_plan
 import rc_render
@@ -139,6 +141,8 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
         sys.exit(f"[エラー] {sess_path} がありません。先に roughcut.py を実行してください。")
     sess = json.loads(sess_path.read_text(encoding="utf-8"))
     tpl = Template(template)
+    look = rc_style.current(tpl)   # 演出のスタイル（にぎやか / 落ち着いた）
+    rc_style.activate(look)
     print(f"■ 仕上げ（テンプレート: {tpl.dir.name}）")
 
     src = SourceSet([probe(Path(p)) for p in sess["inputs"]])
@@ -186,8 +190,17 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
         rc_broll.auto_place(out_dir, sess, tpl, items, plan, llm, effort, usage)
     speedups = rc_speedup.sanitize(plan, works, by_id, sp_cfg)
     plan = rc_plan.sanitize(plan, set(span), moods)
-    if not plan_file:   # テロップの位置・強調・出方とズームの中心を、その場面の映像を見て決める
+    look = rc_style.current(tpl, plan)   # 手直ししたプランに書いてあれば、そのスタイルで仕上げる
+    rc_style.activate(look)
+    plan = rc_style.clean_plan(plan, look)
+    print(f"  演出のスタイル: {rc_style.LOOKS[look][0].split('（')[0]}")
+    rc_style.apply_template(tpl, look)   # 落ち着いたスタイルでは、字幕を小さめ・細い縁取りにする
+    if not plan_file and look != "calm":   # テロップの位置・強調・出方とズームの中心を、その場面の映像を見て決める
         rc_direct.direct(out_dir, plan, by_id, src, tpl, llm, effort, usage, rc_graphics.CARD_STYLES)
+    if not plan_file and look == "calm" and llm == "api" and rc_style.config(tpl)["polish_captions"]:
+        # 字幕の文を読みやすく整える（言葉の途中で区切られた所をつなぎ直してから渡す）
+        fixed = mend_items([(s, e, t) for _, s, e, t in items])
+        plan["caption_text"] = rc_polish.polish_api([(i, m[2]) for (i, *_x), m in zip(items, fixed)], effort, usage)
     for k in ("speedups", "speedups_auto"):   # 早送りは rc_speedup.sanitize の結果だけを使う
         plan.pop(k, None)
     if works or speedups:
@@ -259,12 +272,23 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
     max_chars = tpl["caption"].get("max_chars", 24)
     # 文字起こしが言葉の途中で区切った所（「…にある工」「房と…」）は、言葉がつながるように直してから字幕にする
     cap_items = [(i, *m) for (i, *_x), m in zip(items, mend_items([(s, e, t) for _, s, e, t in items]))]
+    cap_items = rc_polish.texts(cap_items, plan.get("caption_text"))   # AIが整えた文があれば、それを使う
     caps = [(s + off, e + off, t) for s, e, t in build_captions([(s, e, t) for _, s, e, t in cap_items], max_chars)
             if inside(s)]
+    if look == "calm":   # 落ち着いたスタイルでは、字幕の終わりの「、」を出さない
+        caps = [(s, e, t.rstrip("、，,")) for s, e, t in caps if t.rstrip("、，,")]
     telops, se_events = [], []
     order = [i for i, *_x in items]
     said = {i: (s, e, t) for i, s, e, t in items}
-    plan_telops = sorted(plan["telops"], key=lambda t: span[t["start_id"]][0])
+    all_telops = sorted(plan["telops"], key=lambda t: span[t["start_id"]][0])
+    plan_telops = [t for t in all_telops if t["style"] != rc_style.LABEL]
+    labels = []   # 左上の小さなラベル（落ち着いたスタイル）。その言葉を言う所で出して、章が終わるまで残す
+    for t in all_telops:
+        if t["style"] == rc_style.LABEL:
+            k0, k1 = order.index(t["start_id"]), order.index(t["end_id"])
+            s = rc_direct.cue(t["text"], [said[i] for i in order[k0:k1 + 1]])
+            if inside(s):
+                labels.append((s + off, t["text"]))
     for n, t in enumerate(plan_telops):
         # その言葉を言う所で出す（発言の頭で出すと、まだ言っていない結論が先に見えてしまう）
         k0, k1 = order.index(t["start_id"]), order.index(t["end_id"])
@@ -283,6 +307,9 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
     # チャプターは発言IDから、この書き出しのタイムライン（出力fps）で時刻を求め直す
     sess_chapters = rc_chapters.retime(sess.get("chapters", []), ftl, by_id)
     chapters = [(c["t"] + off, c["title"]) for c in sess_chapters if c["t"] > 0.5 and inside(c["t"])]
+    labels = rc_style.schedule_labels(labels, [t for t, _ in chapters], off + body_dur, rc_style.config(tpl))
+    if look == "calm":
+        chapters = []   # 落ち着いたスタイルでは、章カードを画面に出さない（チャプターの一覧は今までどおり作る）
     telops = avoid_chapter_cards(telops, chapters, tpl.get("chapter_card", {}).get("duration", 2.5))
     # 効果音は、章カードを避けてずらした後のテロップの時刻で鳴らす（出さないテロップの音は鳴らさない）
     se_events = [(s, f) for s, _e, _t, _st, f, _o in telops if f]
@@ -324,6 +351,10 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
     caps_ass = rc_speakers.decorate_captions(out_dir, tpl, cap_items, max_chars, off, inside) or caps
     progress = ([(c["t"] + off, c["title"]) for c in sess_chapters], off, off + body_dur)   # 章の進み具合
     ass = build_ass(tpl, w, h, caps_ass, telops, chapters, progress, keywords=plan.get("caption_keywords") or ())
+    pc = rc_graphics.progress_config(tpl)
+    ass = rc_style.add_events(ass, rc_style.label_events(
+        labels, w, h, tpl, top=pc["height"] + 40 if pc.get("enabled") and pc.get("position", "top") != "bottom" else 0),
+        rc_style.label_styles(tpl, h))
     if ftl is not tl:   # 早送り中は画面の隅に「×4」などを出す
         ass = rc_speedup.add_badges(ass, tpl, w, h, ftl.badge_ranges(), off, body_dur)
     (work / "subs.ass").write_text(ass, encoding="utf-8")
@@ -415,6 +446,7 @@ def main():
                     help="api=Claude APIで演出プラン / manual=claude.ai用のプロンプトを作る / none=字幕とBGMだけ")
     ap.add_argument("--plan", type=Path, help="演出プランのJSON（手直ししたもの、またはclaude.aiの返答）")
     ap.add_argument("--effort", choices=["low", "medium", "high"], default="medium")
+    ap.add_argument("--look", choices=list(rc_style.LOOKS), help="演出のスタイル（lively=にぎやか / calm=落ち着いた）")
     ap.add_argument("--preview", type=float, help="最初のN秒だけ書き出して確認する")
     ap.add_argument("--keep-work", action="store_true", help="中間ファイルを消さずに残す")
     ap.add_argument("--plan-only", action="store_true", help="演出プランだけ作って、書き出しはしない")
@@ -431,6 +463,8 @@ def main():
         return
     if not args.out_dir:
         ap.error("roughcut.py の出力フォルダを指定してください")
+    if args.look:
+        rc_style.activate(args.look)
     fx = {k: v == "on" for k, v in (("audio_clean", args.audio_clean), ("color", args.color),
                                      ("stabilize", args.stabilize)) if v != "auto"}
     run(args.out_dir, args.template, args.llm, args.plan, args.effort, args.preview, args.keep_work, args.plan_only,

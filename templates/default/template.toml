@@ -35,6 +35,25 @@ margin_bottom = 56
 max_chars = 24
 keyword_color = "#FFE14D"  # 字幕の中のキーワード（AIが選ぶ商品名・数字など）の色。"" にすると色を付けない
 
+# ---- 演出のスタイル（画面の「作成」タブの「演出のスタイル」で選んだものが優先されます） ----
+[style]
+look = "lively"           # lively = にぎやか（大きなテロップ・効果音・ズーム・章カード）
+                          # calm   = 落ち着いた（左上の小さなラベルだけ。ズーム・効果音・章カードなし。字幕は小さめで、文をAIが整える）
+# ここから下は calm（落ち着いた）のときだけ使います
+caption_scale = 0.7       # 字幕の大きさ（[caption] の size に対する倍率）
+caption_outline = 3       # 字幕の縁取りの太さ
+polish_captions = true    # 字幕の文をAIが読みやすく整える（言い直し・「えー」を削り、9ミリ → 9mm のように単位をそろえる）
+label_size = 34           # 左上の小さなラベルの文字の大きさ
+label_color = "#FFFFFF"   # 値の色（「30g」）
+label_name_color = "#C9D6E2"   # 項目名の色（「重さ」）
+label_fill = "#14181D"    # ラベルの地の色
+label_opacity = 0.78
+label_max = 4             # 同時に出すラベルの数（測るたびに下へ積み上がります）
+label_hold = 45.0         # 出しておく長さの上限（秒）。章が変わったら消えます
+pad_before = 0.1          # カットで残す間（にぎやかのときの値に足す秒）。荒編集をやり直したときに効きます
+pad_after = 0.2
+merge_gap = 0.35
+
 # ---- 演出のディレクター（AIが映像を見て、テロップの置き場所・強調する言葉・大きさ・出方と、ズームの中心を決める） ----
 [direction]
 vision = true             # false にすると、映像は見ずに、下の [telop.*] の position / animation のとおりに出す

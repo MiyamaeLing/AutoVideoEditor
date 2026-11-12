@@ -32,7 +32,7 @@ PLAN_SCHEMA = {
                     "start_id": {"type": "integer"},
                     "end_id": {"type": "integer"},
                     "text": {"type": "string"},
-                    "style": {"type": "string", "enum": ["emphasis", "info", "warning", "funny", *CARD_STYLES]},
+                    "style": {"type": "string", "enum": ["emphasis", "info", "warning", "funny", *CARD_STYLES, "label"]},
                     "se": {"type": "string", "enum": ["none"] + SE_KINDS},
                 },
             },
@@ -63,6 +63,12 @@ PLAN_SCHEMA = {
 
 def _instructions(mode: str, available_moods: list[str]) -> str:
     moods = "、".join(available_moods) if available_moods else "（BGMは未登録なので bgm は空でよい）"
+    import rc_style
+    text = _instructions_lively(mode, moods)
+    return rc_style.plan_instructions(text) if rc_style.is_calm() else text
+
+
+def _instructions_lively(mode: str, moods: str) -> str:
     return f"""あなたはYouTube動画の編集者です。カット済みの動画の文字起こしを読んで、仕上げの演出プランを作ってください。
 {MODE_PLAN_HINT[mode]}{rc_llm.channel_notes("plan", mode)}
 
