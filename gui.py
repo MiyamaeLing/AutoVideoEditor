@@ -1287,8 +1287,9 @@ class ReviewPage(QWidget):
 
         # 演出プラン
         self.plan_tabs = QTabWidget()
-        self.t_telop = QTableWidget(0, 5)
-        self.t_telop.setHorizontalHeaderLabels(["使う", "元の時刻", "テロップの文字（ダブルクリックで修正）", "種類", "効果音"])
+        self.t_telop = QTableWidget(0, 6)
+        self.t_telop.setHorizontalHeaderLabels(["使う", "元の時刻", "テロップの文字（ダブルクリックで修正）", "種類", "効果音",
+                                                "見せ方（AIが映像を見て決定）"])
         self.t_zoom = QTableWidget(0, 4)
         self.t_zoom.setHorizontalHeaderLabels(["使う", "元の時刻", "発言", "強さ"])
         self.t_bgm = QTableWidget(0, 3)
@@ -1885,16 +1886,25 @@ class ReviewPage(QWidget):
             self.t_telop.insertRow(r)
             chk = self._check(t["start_id"], on)
             chk.setData(Qt.UserRole + 1, t["end_id"])
+            chk.setData(Qt.UserRole + 2, dict(t))   # AIが決めた見せ方（位置・強調・大きさ・出方）も持っておく
             self.t_telop.setItem(r, 0, chk)
             self.t_telop.setItem(r, 1, self._ro(fmt(c["start"])))
             self.t_telop.setItem(r, 2, QTableWidgetItem(t["text"]))
             self.t_telop.setCellWidget(r, 3, self._combo(STYLE_JA, t.get("style", "emphasis")))
             self.t_telop.setCellWidget(r, 4, self._combo(SE_JA, t.get("se", "none")))
+            if self.t_telop.columnCount() > 5:
+                import rc_direct
+                import rc_graphics
+                look = self._ro(rc_direct.describe(t, t.get("style") in rc_graphics.CARD_STYLES))
+                look.setToolTip("AIが映像を見て決めた見せ方です（置き場所・強調する言葉・大きさ・出方）")
+                self.t_telop.setItem(r, 5, look)
         for z, on in merged("zooms", "id"):
             c = self._chunk(z["id"]) or {"start": 0, "text": ""}
             r = self.t_zoom.rowCount()
             self.t_zoom.insertRow(r)
-            self.t_zoom.setItem(r, 0, self._check(z["id"], on))
+            zchk = self._check(z["id"], on)
+            zchk.setData(Qt.UserRole + 2, dict(z))   # ズームの中心（AIが映像を見て決めたもの）も持っておく
+            self.t_zoom.setItem(r, 0, zchk)
             self.t_zoom.setItem(r, 1, self._ro(fmt(c["start"])))
             self.t_zoom.setItem(r, 2, self._ro(c["text"]))
             self.t_zoom.setCellWidget(r, 3, self._combo({"small": "弱め", "medium": "強め"}, z.get("strength", "small")))
@@ -1915,9 +1925,14 @@ class ReviewPage(QWidget):
     def _collect_plan(self) -> dict:
         """表の内容を演出プランにする。チェックを外したものは "_off" に入れておく（書き出しでは使わない）"""
         plan = {"telops": [], "zooms": [], "bgm": [], "_off": {"telops": [], "zooms": []}}
+        src = self._plan_source()
+        kws = (read_json(src) or {}).get("caption_keywords") if src else None
+        if kws:
+            plan["caption_keywords"] = kws   # 字幕のキーワード（表には出していないので、そのまま引き継ぐ）
         for r in range(self.t_telop.rowCount()):
             it = self.t_telop.item(r, 0)
-            row = {"start_id": it.data(Qt.UserRole), "end_id": it.data(Qt.UserRole + 1),
+            row = {**(it.data(Qt.UserRole + 2) or {}),
+                   "start_id": it.data(Qt.UserRole), "end_id": it.data(Qt.UserRole + 1),
                    "text": self.t_telop.item(r, 2).text().strip(),
                    "style": self.t_telop.cellWidget(r, 3).currentData(),
                    "se": self.t_telop.cellWidget(r, 4).currentData()}
@@ -1927,7 +1942,8 @@ class ReviewPage(QWidget):
                 plan["_off"]["telops"].append(row)
         for r in range(self.t_zoom.rowCount()):
             it = self.t_zoom.item(r, 0)
-            row = {"id": it.data(Qt.UserRole), "strength": self.t_zoom.cellWidget(r, 3).currentData()}
+            row = {**(it.data(Qt.UserRole + 2) or {}),
+                   "id": it.data(Qt.UserRole), "strength": self.t_zoom.cellWidget(r, 3).currentData()}
             (plan["zooms"] if it.checkState() == Qt.Checked else plan["_off"]["zooms"]).append(row)
         for r in range(self.t_bgm.rowCount()):
             plan["bgm"].append({"start_id": self.t_bgm.item(r, 0).data(Qt.UserRole),

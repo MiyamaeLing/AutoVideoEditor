@@ -219,7 +219,8 @@ class SpeedTimeline:
                 if k1 <= k0:
                     continue
                 mid = p.g_in + float((k0 + k1) / 2 / fps)
-                z = next((zz for s, e, zz in zooms if s <= mid < e), 1.0)
+                hit = next((zz for zz in zooms if zz[0] <= mid < zz[1]), None)   # (開始, 終了, 倍率[, 中心])
+                z, focus = (hit[2] if hit else 1.0), (hit[3] if hit and len(hit) > 3 else None)
                 sid = next((i for i, (s, e, _) in enumerate(sp_ranges) if s <= mid < e), None)
                 speed = sp_ranges[sid][2] if sid is not None else 1.0
                 if sid is None:
@@ -235,11 +236,12 @@ class SpeedTimeline:
                 if of <= 0:
                     continue   # 早送りでフレームが残らないほど短い所（時刻の変換にだけ使う）
                 if sid is None:
-                    self.segs.append(rc_render.Seg(f.path, local0 + float(k0 / fps), of, z))
+                    self.segs.append(rc_render.Seg(f.path, local0 + float(k0 / fps), of, z, focus=focus))
                 else:
                     keep_audio = audio == "fast"
                     self.segs.append(rc_render.Seg(f.path, local0 + float(k0 / fps), of, z, has_audio=keep_audio,
-                                                   speed=speed, gain_db=float(audio_db) if keep_audio else 0.0))
+                                                   speed=speed, gain_db=float(audio_db) if keep_audio else 0.0,
+                                                   focus=focus))
                 cur += of
         self.total_frames = cur
         self._g0 = [pt.g0 for pt in self.parts]

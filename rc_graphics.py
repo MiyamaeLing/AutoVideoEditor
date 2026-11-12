@@ -483,11 +483,16 @@ def card_events(tpl: Template | None, w: int, h: int, telops) -> list[str]:
     # 章の進み具合のバー（と章の名前）が画面の上に出るときは、上に置くカードを少し下げる
     top = (pc["height"] + (pc["title_size"] * 1.4 + 8 if pc.get("show_title", True) else 0)
            if pc.get("enabled") and pc.get("position", "top") != "bottom" else 0)
-    for s, e, text, style, *_ in sorted(telops, key=lambda t: t[0]):
+    for s, e, text, style, *rest in sorted(telops, key=lambda t: t[0]):
         if style not in CARD_STYLES:
             continue
         c = card_config(tpl, style)
         c["_top"] = top
+        o = rest[0] if rest and isinstance(rest[0], dict) else {}   # 見せ方（rc_direct。映像を見て決めた置き場所・出方）
+        if o.get("position"):
+            c["position"] = o["position"]
+        if o.get("animation"):
+            c["animation"] = o["animation"]
         pos = c.get("position", CARD_DEFAULTS[style]["position"])
         anim = c.get("animation", "slide")
         dx, dy = _slide_from(pos) if anim == "slide" else ((0, 30) if anim == "pop" else (0, 0))

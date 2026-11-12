@@ -33,8 +33,15 @@ outline = 6
 shadow = 0
 margin_bottom = 56
 max_chars = 24
+keyword_color = "#FFE14D"  # 字幕の中のキーワード（AIが選ぶ商品名・数字など）の色。"" にすると色を付けない
+
+# ---- 演出のディレクター（AIが映像を見て、テロップの置き場所・強調する言葉・大きさ・出方と、ズームの中心を決める） ----
+[direction]
+vision = true             # false にすると、映像は見ずに、下の [telop.*] の position / animation のとおりに出す
 
 # ---- テロップ（強調など。AIが大事な所に付ける） ----
+# position / animation は、AIが映像を見て決めなかったとき（AIなし・vision = false）の初期値です
+# outline2 = 外側にもう1本付ける縁取りの太さ（0 で無し）/ outline2_color = その色 / emphasis_color = 強調する言葉の色
 [telop.emphasis]          # 大事なポイント（画面上部に大きく、ポンッと出る）
 font = "BIZ UDPGothic"
 size = 96
@@ -42,8 +49,11 @@ bold = true
 color = "#FFE14D"
 outline_color = "#1A1A1A"
 outline = 9
-position = "top"          # top / middle / top-left
-animation = "pop"         # pop / fade / slide
+outline2 = 6
+outline2_color = "#FFFFFF"
+emphasis_color = "#FF7A59"
+position = "top"          # top / middle / top-left / top-right / left / right / bottom-left / bottom-right
+animation = "pop"         # pop / fade / slide / drop / zoom / shake
 
 [telop.info]              # 補足情報（左上に帯で出る）
 font = "BIZ UDPGothic"
@@ -61,6 +71,9 @@ bold = true
 color = "#FFFFFF"
 outline_color = "#C53030"
 outline = 9
+outline2 = 6
+outline2_color = "#FFFFFF"
+emphasis_color = "#FFE14D"
 position = "top"
 animation = "pop"
 
@@ -71,6 +84,9 @@ bold = true
 color = "#FFFFFF"
 outline_color = "#D53F8C"
 outline = 9
+outline2 = 6
+outline2_color = "#FFFFFF"
+emphasis_color = "#FFE14D"
 position = "top"
 animation = "pop"
 

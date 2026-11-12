@@ -36,6 +36,7 @@ class Seg:
     video_start: float = 0.0    # video のファイル内の開始秒
     fit: str = "pad"            # 縦横比が違うとき: pad=黒で埋める / blur=ぼかした背景で埋める
     broll: object = None   # 重ねる差し込み素材（rc_broll.Overlay）。無ければ None
+    focus: tuple | None = None   # ズームの中心（横・縦 0〜1。rc_direct が映像を見て決める）。None なら画面の真ん中
 
 
 def sub_seg(s: Seg, k0: int, k1: int, fps: Fraction) -> Seg:
@@ -118,7 +119,13 @@ def pick_encoder(pref: str, quality: int) -> tuple[list[str], list[str], str]:
 # ---------- 1. 本編 ----------
 
 def _pre_chain(s: Seg, w: int, h: int) -> str:
-    zoom = f"crop=iw/{s.zoom:.3f}:ih/{s.zoom:.3f}," if s.zoom > 1.001 else ""
+    zoom = ""
+    if s.zoom > 1.001:
+        zoom = f"crop=iw/{s.zoom:.3f}:ih/{s.zoom:.3f}"
+        if s.focus:   # 中心を寄せたい物に合わせる（画面の外にはみ出さない所まで）
+            fx, fy = (min(max(float(v), 0.0), 1.0) for v in s.focus)
+            zoom += (f":x='max(0,min(iw-ow,iw*{fx:.4f}-ow/2))':y='max(0,min(ih-oh,ih*{fy:.4f}-oh/2))'")
+        zoom += ","
     # 手ブレ補正（vidstab）は縦横が偶数の画素でないと動かない（縦長の2台目などで奇数になることがある）
     even = ":force_divisible_by=2" if s.fx and getattr(s.fx, "stab", "") else ""
     return f"{zoom}scale={w}:{h}:force_original_aspect_ratio=decrease{even}"

@@ -21,7 +21,7 @@ MODE_PLAN_HINT = {
 PLAN_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["telops", "zooms", "bgm"],
+    "required": ["telops", "zooms", "bgm", "caption_keywords"],
     "properties": {
         "telops": {
             "type": "array",
@@ -55,6 +55,8 @@ PLAN_SCHEMA = {
                                "mood": {"type": "string", "enum": MOODS + ["none"]}},
             },
         },
+        "caption_keywords": {"type": "array", "items": {"type": "string"},
+                             "description": "字幕の中で色を付けて目立たせる言葉（5〜12個）"},
     },
 }
 
@@ -85,6 +87,8 @@ def _instructions(mode: str, available_moods: list[str]) -> str:
 - bgm: BGMの区間。start_id から次の区間まで、その雰囲気の曲が流れます
   - 使える雰囲気: {moods}（none=BGMなし。真剣な説明や音を聞かせたい所）
   - 最初の区間は必ず最初のIDから。区間は3〜8個程度。細かく切り替えすぎない
+- caption_keywords: 字幕の中で色を付けて目立たせる言葉を5〜12個。この動画の主役の言葉（商品名・素材・数字と単位・結論の一言など）で、
+  発言にそのまま出てくる形（2〜8字）。「これ」「です」のようなどこにでも出る言葉は入れない
 
 出力はJSONのみです。"""
 
@@ -117,6 +121,13 @@ def default_plan(items, moods: list[str]) -> dict:
 def sanitize(plan: dict, valid_ids: set[int], moods: list[str]) -> dict:
     """存在しないIDや、BGMが用意されていない雰囲気を取り除く"""
     out = {"telops": [], "zooms": [], "bgm": []}
+    kws = []
+    for k in plan.get("caption_keywords") or []:
+        k = str(k).strip()
+        if 2 <= len(k) <= 12 and k not in kws:
+            kws.append(k)
+    if kws:
+        out["caption_keywords"] = kws[:16]
     for t in plan.get("telops", []):
         if t.get("start_id") in valid_ids and t.get("text"):
             if t.get("end_id") not in valid_ids or t["end_id"] < t["start_id"]:
@@ -131,7 +142,7 @@ def sanitize(plan: dict, valid_ids: set[int], moods: list[str]) -> dict:
                 b["mood"] = "none" if b.get("mood") == "none" or not moods else moods[0]
             out["bgm"].append(b)
     # ほかの機能が足した項目（2台目カメラの "angles" など）は、そのまま引き継ぐ
-    out.update({k: v for k, v in plan.items() if k not in out and k != "_off"})
+    out.update({k: v for k, v in plan.items() if k not in out and k not in ("_off", "caption_keywords")})
     if "broll" in plan:   # Bロール（差し込み素材。rc_broll.py）
         import rc_broll
         out["broll"] = rc_broll.sanitize(plan["broll"], valid_ids)

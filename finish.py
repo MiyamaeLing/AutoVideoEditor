@@ -29,6 +29,8 @@ if sys.platform == "win32":
 import rc_win  # noqa: F401
 import rc_broll
 import rc_chapters
+import rc_direct
+import rc_graphics
 import rc_llm
 import rc_multicam
 import rc_plan
@@ -67,7 +69,7 @@ def split_by_zoom(tl: Timeline, zooms: list[tuple[float, float, float]]) -> list
         n = p.seq_end - p.seq_start
         local0 = p.g_in - tl.sources.offsets[p.file_index]
         cuts = {0, n}
-        for s, e, _ in zooms:
+        for s, e, *_ in zooms:
             for b in (s, e):
                 if p.g_in < b < p.g_out:
                     cuts.add(round((b - p.g_in) * fps))
@@ -76,8 +78,9 @@ def split_by_zoom(tl: Timeline, zooms: list[tuple[float, float, float]]) -> list
             if k1 <= k0:
                 continue
             mid = p.g_in + float((k0 + k1) / 2 / fps)
-            z = next((zz for s, e, zz in zooms if s <= mid < e), 1.0)
-            segs.append(rc_render.Seg(f.path, local0 + float(k0 / fps), k1 - k0, z))
+            hit = next((zz for zz in zooms if zz[0] <= mid < zz[1]), None)   # (開始, 終了, 倍率[, 中心])
+            segs.append(rc_render.Seg(f.path, local0 + float(k0 / fps), k1 - k0, hit[2] if hit else 1.0,
+                                      focus=hit[3] if hit and len(hit) > 3 else None))
     return segs
 
 
@@ -183,6 +186,8 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
         rc_broll.auto_place(out_dir, sess, tpl, items, plan, llm, effort, usage)
     speedups = rc_speedup.sanitize(plan, works, by_id, sp_cfg)
     plan = rc_plan.sanitize(plan, set(span), moods)
+    if not plan_file:   # テロップの位置・強調・出方とズームの中心を、その場面の映像を見て決める
+        rc_direct.direct(out_dir, plan, by_id, src, tpl, llm, effort, usage, rc_graphics.CARD_STYLES)
     for k in ("speedups", "speedups_auto"):   # 早送りは rc_speedup.sanitize の結果だけを使う
         plan.pop(k, None)
     if works or speedups:
@@ -217,7 +222,7 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
     zooms = []
     for z in plan["zooms"]:
         c = by_id[z["id"]]
-        zooms.append((c.start - 0.1, c.end + 0.3, float(zcfg.get(z["strength"], 1.15))))
+        zooms.append((c.start - 0.1, c.end + 0.3, float(zcfg.get(z["strength"], 1.15)), rc_direct.zoom_focus(z)))
     ftl = tl   # 完成（本編）の時刻に直すタイムライン。早送りがあれば、その分を縮めたもの
     if plan.get("speedups"):
         ftl = rc_speedup.SpeedTimeline(tl, plan["speedups"], zooms, sp_cfg["audio"], sp_cfg["audio_volume_db"])
@@ -240,7 +245,6 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
     intro_p = tpl.path(tpl.get("intro", {}).get("file", ""))
     outro_p = tpl.path(tpl.get("outro", {}).get("file", ""))
     if not preview:   # [opening] / [ending] が有効なら、テンプレートから自動で作ったものを使う
-        import rc_graphics
         intro_p, outro_p = rc_graphics.auto_intro_outro(tpl, intro_p, outro_p)
     intro = clip_seg(intro_p, fps) if intro_p and not preview else None
     outro = clip_seg(outro_p, fps) if outro_p and not preview else None
@@ -263,14 +267,15 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
         if not inside(s):
             continue
         se = tpl.se_file(t["se"]) if t.get("se", "none") != "none" else None
-        telops.append((s + off, min(e, body_dur) + off, t["text"], t["style"], se))
+        telops.append((s + off, min(e, body_dur) + off, t["text"], t["style"], se,
+                       rc_direct.telop_opts(t, t["style"] in rc_graphics.CARD_STYLES)))
     # チャプターは発言IDから、この書き出しのタイムライン（出力fps）で時刻を求め直す
     sess_chapters = rc_chapters.retime(sess.get("chapters", []), ftl, by_id)
     chapters = [(c["t"] + off, c["title"]) for c in sess_chapters if c["t"] > 0.5 and inside(c["t"])]
     telops = avoid_chapter_cards(telops, chapters, tpl.get("chapter_card", {}).get("duration", 2.5))
     # 効果音は、章カードを避けてずらした後のテロップの時刻で鳴らす（出さないテロップの音は鳴らさない）
-    se_events = [(s, f) for s, _e, _t, _st, f in telops if f]
-    telops = [(s, e, text, style) for s, e, text, style, _f in telops]
+    se_events = [(s, f) for s, _e, _t, _st, f, _o in telops if f]
+    telops = [(s, e, text, style, opts) for s, e, text, style, _f, opts in telops]
 
     # ---- BGM ----
     bgm_files = tpl.bgm_files()
@@ -307,7 +312,7 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
     import rc_speakers
     caps_ass = rc_speakers.decorate_captions(out_dir, tpl, items, max_chars, off, inside) or caps
     progress = ([(c["t"] + off, c["title"]) for c in sess_chapters], off, off + body_dur)   # 章の進み具合
-    ass = build_ass(tpl, w, h, caps_ass, telops, chapters, progress)
+    ass = build_ass(tpl, w, h, caps_ass, telops, chapters, progress, keywords=plan.get("caption_keywords") or ())
     if ftl is not tl:   # 早送り中は画面の隅に「×4」などを出す
         ass = rc_speedup.add_badges(ass, tpl, w, h, ftl.badge_ranges(), off, body_dur)
     (work / "subs.ass").write_text(ass, encoding="utf-8")
