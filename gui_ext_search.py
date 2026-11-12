@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import html
 import re
+import rc_theme
 import sys
 from pathlib import Path
 
@@ -95,7 +96,7 @@ class SearchTab(QWidget):
         self.query.setPlaceholderText("探す言葉（例: ドリル　空白で区切ると、全部を含む発言を探します）")
         self.query.returnPressed.connect(self.search)
         go = QPushButton("検索")
-        go.setStyleSheet("QPushButton { background: #2B6CB0; color: white; font-weight: bold; padding: 4px 16px; }")
+        rc_theme.style(go, kind="primary")
         go.clicked.connect(self.search)
         self.inc_cut = QCheckBox("カットした発言も含める")
         self.inc_cut.toggled.connect(lambda _on: self.query.text().strip() and self.search())

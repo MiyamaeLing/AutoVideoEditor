@@ -24,8 +24,6 @@ import rc_theme   # 行の色は今のテーマ（ライト／ダーク）に合
 C_BAD = QColor("#F3D6D6")   # ライトのときの色（互換のため残す）
 C_WARN = QColor("#FFF3C4")
 C_OK = QColor("#D8F0DA")
-PRIMARY = "QPushButton { background: #2B6CB0; color: white; font-weight: bold; padding: 6px 12px; }" \
-          " QPushButton:disabled { background: #CBD5E0; color: #F7FAFC; }"
 
 
 def _g(win):
@@ -75,7 +73,7 @@ class PlanTab(QWidget):
         self.notes.setPlaceholderText("伝えたいこと・使う道具・撮影場所・見てほしい人など（なくても大丈夫）")
         self.notes.setMaximumHeight(90)
         self.b_new = QPushButton("構成案・台本・撮影リストを作る")
-        self.b_new.setStyleSheet(PRIMARY)
+        rc_theme.style(self.b_new, kind="primary")
         self.b_new.clicked.connect(self.generate)
         hint = QLabel("AIは「作成」タブの設定を使います（AIを使わない場合は、ジャンルの定番の流れのひな形を作ります）")
         hint.setWordWrap(True)

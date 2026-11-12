@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from gui_util import fmt as _fmt
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
@@ -24,13 +25,6 @@ import rc_theme
 LOW_SCORE = 0.1          # これより自信が低い発言は、黄色で「確認がおすすめ」と出す
 C_LOW = QColor("#FFF3C4")
 C_CAPTION_BG = QColor("#2D3748")   # 字幕の色が見やすいように、話者の欄は暗い背景にする
-
-
-def _fmt(t: float) -> str:
-    t = max(0, int(t))
-    h, r = divmod(t, 3600)
-    m, s = divmod(r, 60)
-    return f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
 
 
 def _ro(text: str) -> QTableWidgetItem:
@@ -65,8 +59,7 @@ class SpeakerDialog(QDialog):
         for n in range(1, 7):
             self.num.addItem(f"{n}人", str(n))
         self.b_detect = QPushButton("話者を推定する")
-        self.b_detect.setStyleSheet("QPushButton { background: #2B6CB0; color: white; font-weight: bold; }"
-                                    " QPushButton:disabled { background: #CBD5E0; color: #F7FAFC; }")
+        rc_theme.style(self.b_detect, kind="primary")
         self.b_detect.clicked.connect(self.detect)
         self.status = QLabel("")
         self.status.setProperty("role", "sub")

@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+from gui_util import fmt as _fmt
 from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
@@ -45,13 +46,6 @@ TEXT_ICONS = {
 }
 # 下のボタン列は数が多いので、流れの節目になる4つだけにアイコンを付ける（横幅を広げすぎない）
 REVIEW_ICONS = {"b_apply": "scissors", "b_plan": "spark", "b_final": "export", "b_yt": "youtube"}
-
-
-def _fmt(t: float) -> str:
-    t = max(0, t)
-    h, r = divmod(int(t), 3600)
-    m, s = divmod(r, 60)
-    return f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
 
 
 def _repolish(w: QWidget):

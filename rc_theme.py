@@ -11,7 +11,10 @@
     b.setProperty("kind", "danger")      # YouTube など（赤）
     b.setProperty("kind", "subtle")      # 控えめ（枠なし）
     b.setProperty("big", True)           # 大きなボタン
-ラベルは property "role" = "title" / "sub" / "link" / "hint"
+ラベルは property "role" = "title" / "sub" / "link" / "hint" / "ok" / "warn" / "error" / "notice"
+色は直接書かず、rc_theme.style(部品, kind=..., role=...) で役割を付ける（ライト・ダークのどちらでも合う）:
+    rc_theme.style(b, kind="primary", big=True)
+    rc_theme.style(label, role="warn")
 """
 from __future__ import annotations
 
@@ -120,6 +123,15 @@ QToolButton {{ border: 1px solid transparent; border-radius: 6px; padding: 3px 6
 QToolButton:hover {{ background: {t['surface2']}; border-color: {t['border']}; }}
 QToolButton:checked {{ background: {t['accent_soft']}; }}
 QToolButton[role="link"] {{ color: {t['accent']}; }}
+QToolButton[role="menu"] {{ background: {t['surface']}; color: {t['text']}; border: 1px solid {t['border_strong']};
+                           border-radius: 6px; padding: 4px 7px; min-height: 20px; }}
+QToolButton[role="menu"]:hover {{ border-color: {t['accent']}; background: {t['surface2']}; }}
+QToolButton[role="menu"]:disabled {{ color: {t['disabled_text']}; background: {t['disabled_bg']};
+                                    border-color: {t['border']}; }}
+QToolButton[role="menu"]::menu-indicator {{ subcontrol-position: right center; right: 5px; }}
+QToolButton[role="tile"] {{ border: 3px solid transparent; border-radius: 8px; padding: 2px; }}
+QToolButton[role="tile"]:hover {{ background: {t['surface2']}; border-color: {t['border']}; }}
+QToolButton[role="tile"]:checked {{ border: 3px solid {t['accent']}; background: {t['accent_soft']}; font-weight: bold; }}
 QLineEdit, QPlainTextEdit, QListWidget {{ background: {t['input']}; color: {t['text']};
     border: 1px solid {t['border_strong']}; border-radius: 6px; padding: 4px 6px;
     selection-background-color: {t['accent']}; selection-color: {t['on_accent']}; }}
@@ -146,6 +158,12 @@ QStatusBar {{ color: {t['subtext']}; }}
 QLabel[role="title"] {{ font-size: 15px; font-weight: bold; }}
 QLabel[role="sub"] {{ color: {t['subtext']}; }}
 QLabel[role="hint"] {{ color: {t['subtext']}; font-size: 11px; }}
+QLabel[role="group"] {{ color: {t['subtext']}; font-size: 11px; font-weight: bold; }}
+QLabel[role="ok"] {{ color: {t['ok']}; }}
+QLabel[role="warn"] {{ color: {t['warn']}; }}
+QLabel[role="error"] {{ color: {t['danger']}; font-weight: bold; }}
+QLabel[role="strong"] {{ font-weight: bold; }}
+QFrame[role="vsep"] {{ color: {t['border']}; }}
 QLabel[role="summary"] {{ background: {t['surface2']}; color: {t['text']}; border: 1px solid {t['border']};
                         border-radius: 6px; padding: 6px; }}
 QLabel[role="notice"] {{ background: {t['notice_bg']}; color: {t['notice_text']}; border-radius: 6px; padding: 6px; }}
@@ -177,6 +195,18 @@ def apply(app, mode: str = "auto", font_size: str = "normal") -> dict:
         except Exception:  # noqa: BLE001  1つの描き直しの失敗で、テーマの切り替えを止めない
             pass
     return _current
+
+
+def style(w, kind: str | None = None, role: str | None = None, big: bool | None = None):
+    """部品の見た目を役割で決める（個別の色指定は外す）。あとから役割を変えても、すぐ見た目に反映する"""
+    w.setStyleSheet("")
+    for name, v in (("kind", kind), ("role", role), ("big", big)):
+        if v is not None:
+            w.setProperty(name, v)
+    st = w.style()
+    st.unpolish(w)
+    st.polish(w)
+    return w
 
 
 _hooks: list = []

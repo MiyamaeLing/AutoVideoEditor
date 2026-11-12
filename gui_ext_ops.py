@@ -1,6 +1,7 @@
 """「ヘルプ」メニューの拡張：困ったときの情報をコピー・最新版に更新・起動時の新しい版のお知らせ。"""
 from __future__ import annotations
 
+import rc_theme
 import os
 import sys
 import threading
@@ -132,7 +133,7 @@ class UpdateBanner(QWidget):
     def __init__(self, win, remote: dict):
         super().__init__()
         lab = QLabel(f"新しい版があります（{rc_ops_update.version_text(remote)} {remote.get('message', '')[:40]}）")
-        lab.setStyleSheet("background: #FFF3C4; color: #744210; border-radius: 4px; padding: 2px 8px; font-weight: bold;")
+        rc_theme.style(lab, role="notice")
         b = QPushButton("更新する")
         b.clicked.connect(lambda: start_update(win))
         x = QPushButton("あとで")

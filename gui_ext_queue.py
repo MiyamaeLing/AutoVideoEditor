@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import rc_theme
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
@@ -74,7 +75,8 @@ class QueuePage(QWidget):
         self.table.itemSelectionChanged.connect(self._update_buttons)
         self.empty = QLabel("ここに動画をドラッグ＆ドロップすると、順番待ちに入ります")
         self.empty.setAlignment(Qt.AlignCenter)
-        self.empty.setStyleSheet("color: #888; font-size: 14px; padding: 20px;")
+        rc_theme.style(self.empty, role="sub")
+        self.empty.setContentsMargins(20, 20, 20, 20)
 
         self.b_up = QPushButton("↑ 上へ")
         self.b_down = QPushButton("↓ 下へ")
@@ -103,8 +105,7 @@ class QueuePage(QWidget):
         self.shutdown.setToolTip("最後の動画が終わった2分後に電源を切ります（取り消すときは Windowsキー＋R で「shutdown /a」）")
         self.b_run = QPushButton("順番に処理を始める")
         self.b_run.setMinimumHeight(44)
-        self.b_run.setStyleSheet("QPushButton { font-size: 15px; font-weight: bold; background: #2B6CB0; color: white; }"
-                                 " QPushButton:disabled { background: #CBD5E0; color: #F7FAFC; }")
+        rc_theme.style(self.b_run, kind="primary", big=True)
         self.b_run.clicked.connect(self.run)
         self.count = QLabel("")
         row3 = QHBoxLayout()
@@ -359,7 +360,6 @@ def register(win):
         act = m.addAction(v)
         act.triggered.connect(lambda _=False, k=k: page.add_from_create(k))
     b.setMenu(m)
-    b.setStyleSheet("font-size: 14px;")
     win.create_queue_btn = b
     lay = win.create.layout()
     for i in range(lay.count()):

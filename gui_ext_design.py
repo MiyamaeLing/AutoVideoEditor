@@ -9,11 +9,13 @@
 from __future__ import annotations
 
 import copy
+import rc_theme
 import json
 import sys
 import threading
 from pathlib import Path
 
+from gui_util import gui_module as _gui
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPixmap
 from PySide6.QtWidgets import (
@@ -63,11 +65,6 @@ SPEC_THUMB = [("style", "見せ方", "choice", [(k, v["label"]) for k, v in rc_t
 SECTIONS = [("字幕", ("caption",), SPEC_CAPTION, "emphasis")] + \
     [(label, ("telop", key), SPEC_TELOP, key) for key, label in rc_design.TELOPS] + \
     [("章カード", ("chapter_card",), SPEC_CHAPTER, "chapter"), ("サムネイル", ("thumbnail",), SPEC_THUMB, "thumb")]
-
-
-def _gui(win):
-    """gui.py（python gui.py で起動したときは __main__）のモジュール"""
-    return sys.modules[type(win).__module__]
 
 
 def _open(win, p: Path):
@@ -291,7 +288,7 @@ class TemplateEditor(QDialog):
         self.b_save = QPushButton("上書き保存")
         self.b_save.clicked.connect(self.save)
         b_saveas = QPushButton("別名で保存…")
-        b_saveas.setStyleSheet("background: #2B6CB0; color: white; font-weight: bold; padding: 4px 14px;")
+        rc_theme.style(b_saveas, kind="primary")
         b_saveas.clicked.connect(self.save_as)
         b_close = QPushButton("閉じる")
         b_close.clicked.connect(self.close)
@@ -398,7 +395,7 @@ class TemplateEditor(QDialog):
         name = self.tdir.name if not self.is_new else f"新しい案（{self.from_title or '未保存'}）"
         d = self.dirty()
         self.state.setText(f"編集中: {name}" + ("　● まだ保存していない変更があります" if d else "　（保存済み）"))
-        self.state.setStyleSheet("color: #C05621;" if d else "color: #2F855A;")
+        rc_theme.style(self.state, role="warn" if d else "ok")
         self.setWindowTitle(f"見た目テンプレートの編集 - {name}" + (" ●" if d else ""))
         self.b_save.setEnabled(d and not self.is_new)
         self.b_reset.setEnabled(d and not self.is_new)
@@ -416,7 +413,7 @@ class TemplateEditor(QDialog):
             return   # もっと新しい見本を作っている途中
         if not res:
             self.status.setText(f"見本を作れませんでした: {err}")
-            self.status.setStyleSheet("color: #C53030;")
+            rc_theme.style(self.status, role="error")
             return
         self.status.setProperty("role", "sub")
         self.status.setText("見本は本番の書き出しと同じ方法で作っています。")
@@ -728,8 +725,7 @@ class ProposeDialog(QDialog):
                       + f"　／　AI: {llm_label}（「作成」タブの設定）<br>"
                       "フォントは、このPCに入っている日本語のフォントの中から選ばれます。")
         self.b_go = QPushButton("3つの案を作る")
-        self.b_go.setStyleSheet("QPushButton { background: #2B6CB0; color: white; font-weight: bold; padding: 6px 18px; }"
-                                + getattr(_gui(win), "DISABLED_CSS", ""))
+        rc_theme.style(self.b_go, kind="primary")
         self.b_go.clicked.connect(lambda: self.run())
         row = QHBoxLayout()
         row.addWidget(QLabel("チャンネルの雰囲気"))
@@ -877,7 +873,7 @@ class ProposeDialog(QDialog):
         fl = QLabel("フォント: " + "、".join(fonts))
         fl.setWordWrap(True)
         b_save = QPushButton("この案で保存…")
-        b_save.setStyleSheet("background: #2B6CB0; color: white; font-weight: bold;")
+        rc_theme.style(b_save, kind="primary")
         b_save.clicked.connect(lambda: self.save(i))
         b_edit = QPushButton("細かく調整する…")
         b_edit.clicked.connect(lambda: self.tune(i))

@@ -18,7 +18,8 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QRadioButton,
-    QScrollArea, QSpinBox, QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QToolButton, QVBoxLayout, QWidget,
+    QMenu, QScrollArea, QSpinBox, QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QToolButton, QVBoxLayout,
+    QWidget, QWidgetAction,
 )
 
 try:
@@ -31,8 +32,11 @@ except Exception:  # 環境によっては動画再生の部品が使えない
 APP_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(APP_DIR))
 import rc_media  # noqa: E402
+from gui_util import fmt, open_path, read_json  # noqa: E402,F401
+import rc_theme  # noqa: E402
 import rc_win  # noqa: E402,F401  (FFmpeg実行時に黒い画面を出さない)
 from rc_transcribe import is_filler_only  # noqa: E402
+from gui_thumbs import ClickLabel, SceneDialog, ThumbDialog  # noqa: E402,F401  （サムネイルの画面）
 VIDEO_EXT = "動画ファイル (*.mp4 *.MP4 *.mov *.MOV *.mts *.MTS *.m2ts *.mkv *.avi);;すべて (*.*)"
 MODES = [
     ("talk", "レビュー・解説", "喋っていない所をどんどん詰めます。言い直しやNGはAIがカットします。"),
@@ -64,24 +68,6 @@ DISABLED_CSS = " QPushButton:disabled { background: #CBD5E0; color: #F7FAFC; }"
 C_CUT = QColor("#F3D6D6")
 C_REVIEW = QColor("#FFF3C4")
 C_HILITE = QColor("#D8F0DA")
-
-
-def fmt(t: float) -> str:
-    t = max(0, t)
-    h, r = divmod(int(t), 3600)
-    m, s = divmod(r, 60)
-    return f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
-
-
-def read_json(p: Path, default=None):
-    try:
-        return json.loads(p.read_text(encoding="utf-8-sig"))
-    except Exception:
-        return default
-
-
-def open_path(p: Path):
-    QDesktopServices.openUrl(QUrl.fromLocalFile(str(p)))
 
 
 def open_settings() -> QSettings:
@@ -517,7 +503,7 @@ class CreatePage(QWidget):
         ml = QHBoxLayout()
         self.mode_desc = QLabel()
         self.mode_desc.setWordWrap(True)
-        self.mode_desc.setStyleSheet("color: #555;")
+        rc_theme.style(self.mode_desc, role="sub")
         for i, (key, label, desc) in enumerate(MODES):
             rb = QRadioButton(label)
             rb.setProperty("key", key)
@@ -642,9 +628,8 @@ class CreatePage(QWidget):
         self.btn_full.setToolTip("荒編集 → 演出プラン → 完成動画の書き出しまで、止まらずに進めます")
         for b in (self.btn_rough, self.btn_full):
             b.setMinimumHeight(44)
-            b.setStyleSheet("font-size: 15px; font-weight: bold;")
-        self.btn_full.setStyleSheet("QPushButton { font-size: 15px; font-weight: bold; background: #2B6CB0; color: white; }"
-                                    + DISABLED_CSS)
+            rc_theme.style(b, big=True)
+        rc_theme.style(self.btn_full, kind="primary")
         self._target_changed()
         self.btn_rough.clicked.connect(lambda: self.start(full=False))
         self.btn_full.clicked.connect(lambda: self.start(full=True))
@@ -754,7 +739,7 @@ class CreatePage(QWidget):
         else:
             has = True
             self.key_label.setText("")
-        self.key_label.setStyleSheet("color: #2F855A;" if has else "color: #C05621;")
+        rc_theme.style(self.key_label, role="ok" if has else "warn")
 
     def _check_cc(self):
         import rc_cc
@@ -866,239 +851,6 @@ class PreviewImages(QDialog):
         lay.addLayout(bb)
 
 
-class ClickLabel(QLabel):
-    def __init__(self, path: Path):
-        super().__init__()
-        self.path = path
-        pm = QPixmap(str(path))
-        self.setPixmap(pm.scaledToWidth(320, Qt.SmoothTransformation))
-        self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip(f"{path.name}（クリックで大きく開く）")
-
-    def mousePressEvent(self, e):
-        open_path(self.path)
-
-
-class ThumbDialog(QDialog):
-    """サムネイル案を並べて表示する"""
-
-    def __init__(self, page: "ReviewPage", tdir: Path):
-        super().__init__(page)
-        self.page = page
-        self.setWindowTitle("サムネイル案")
-        info = read_json(tdir / "thumbnails.json", []) or []
-        lay = QVBoxLayout(self)
-        lay.addWidget(QLabel("クリックすると大きく開きます。気に入ったものは「YouTubeへ」画面の「サムネイル」で選ぶと、"
-                             "動画に自動で設定されます。"))
-        grid = QGridLayout()
-        import rc_thumb
-        import rc_thumbart
-        # 並べる順は rc_thumb.grid_files（AIに指示するとき、「案2の右端」などがAIにも同じ位置で伝わる）
-        for r, (no, files) in enumerate(rc_thumb.grid_files(tdir).items()):
-            meta = next((i for i in info if str(i.get("image")) == no), {})
-            look = rc_thumbart.describe(meta)
-            when = ""
-            if meta.get("video_time") is not None:   # 完成動画のどこの場面か
-                when = f"（{rc_thumb.fmt_time(meta['video_time'])}{'・選んだ場面' if meta.get('chosen') else ''}）"
-            cap = QLabel(f"案{no}{when}：「{meta.get('text', '').replace(chr(92) + 'n', ' ').replace(chr(10), ' ')}」  "
-                         f"{meta.get('reason', '')}"
-                         + (f"\n　デザイン: {look}" if look else ""))
-            cap.setStyleSheet("font-weight: bold; margin-top: 6px;")
-            grid.addWidget(cap, r * 2, 0, 1, 3)
-            for c, f in enumerate(files):
-                grid.addWidget(ClickLabel(f), r * 2 + 1, c)
-        lay.addLayout(grid)
-        lay.addStretch(1)
-        # AIに指示して作り直す（前回の案の画像と、これまでの指示もAIに見せる）
-        api = page.win.create.llm.currentData() == "api"
-        made = rc_thumb.requests_made(tdir)
-        if made:
-            self.made = QLabel("反映ずみの指示: " + " ／ ".join(made[-3:]))
-            self.made.setWordWrap(True)
-            self.made.setStyleSheet("color: gray;")
-            lay.addWidget(self.made)
-        ask_row = QHBoxLayout()
-        self.request = QLineEdit()
-        self.request.setPlaceholderText("AIへの指示（例: 案2は文字を左に・もっと明るく・バッジは要らない・真ん中の段の右端は別の場面で）")
-        self.request.returnPressed.connect(self._ask)
-        self.b_ask = QPushButton("AIに指示して作り直す")
-        self.b_ask.clicked.connect(self._ask)
-        if api:
-            self.b_ask.setToolTip("今の案の画像と、これまでの指示もAIに見せて作り直します（指示は積み重なります。"
-                                  "「別の場面から選び直す」などで作り直すと、まっさらに戻ります）")
-        else:
-            for w in (self.request, self.b_ask):
-                w.setEnabled(False)
-                w.setToolTip("「作成」タブの AI を「Claude APIで自動」にすると、AIに指示して作り直せます。")
-        ask_row.addWidget(self.request, 1)
-        ask_row.addWidget(self.b_ask)
-        lay.addLayout(ask_row)
-        row = QHBoxLayout()
-        self.text = QLineEdit()
-        self.text.setPlaceholderText("自分で文字を決めて作り直す（例: 軽すぎ！　2行にするときは \\n で区切る）")
-        redo = QPushButton("この文字で作り直す")
-        redo.clicked.connect(self._redo)
-        row.addWidget(self.text, 1)
-        row.addWidget(redo)
-        lay.addLayout(row)
-        # 場面を変える: 自分で選ぶ / 今の案とは別の場面から選び直す
-        row2 = QHBoxLayout()
-        self.b_scenes = QPushButton("場面を選んで作り直す…")
-        self.b_scenes.setToolTip("動画から取り出した場面を並べて表示します。使いたい場面を選ぶか、完成動画の時刻で指定できます。")
-        self.b_scenes.clicked.connect(lambda: (self.accept(), SceneDialog(self.page, tdir).exec()))
-        self.b_again = QPushButton("別の場面から選び直す" + ("（AI）" if api else ""))
-        self.b_again.setToolTip("今の案に使っている場面を外し、動画全体から新しく取り出した場面から"
-                                + ("AIが選び直します。" if api else "選び直します（AIなしなので、くっきりした場面を自動で）。"))
-        self.b_again.clicked.connect(lambda: (self.accept(), self.page.thumbnails(fresh=True)))
-        folder = QPushButton("フォルダを開く")
-        folder.clicked.connect(lambda: open_path(tdir))
-        close = QPushButton("閉じる")
-        close.clicked.connect(self.accept)
-        for b in (self.b_scenes, self.b_again):
-            row2.addWidget(b)
-        row2.addStretch(1)
-        for b in (folder, close):
-            row2.addWidget(b)
-        lay.addLayout(row2)
-
-    def _redo(self):
-        t = self.text.text().strip()
-        if t:
-            self.accept()
-            self.page.thumbnails(text=t)
-
-    def _ask(self):
-        t = self.request.text().strip()
-        if t and self.b_ask.isEnabled():
-            self.accept()
-            self.page.thumbnails(request=t)
-
-
-class SceneDialog(QDialog):
-    """サムネイルに使う場面を選ぶ。動画から取り出した場面（thumbnails/candidates.json）を、完成動画の時刻の順に並べる。
-    完成動画の時刻を入れても選べる。足りない分は、AI（AIなしなら自動）がほかの場面から選ぶ"""
-    MAX = 3
-    MARKS = "①②③"
-
-    def __init__(self, page: "ReviewPage", tdir: Path):
-        super().__init__(page)
-        import rc_thumb
-        self.T = rc_thumb
-        self.page = page
-        self.setWindowTitle("サムネイルの場面を選ぶ")
-        self.resize(1240, 860)
-        lay = QVBoxLayout(self)
-        api = page.win.create.llm.currentData() == "api"
-        lay.addWidget(QLabel(
-            "サムネイルに使いたい場面をクリックして選んでください（3つまで。選んだ順に案1・案2・案3になります。もう一度押すと外れます）。\n"
-            + ("文字とデザインはAIが付けます。" if api else "文字は動画のタイトル案から付けます。")
-            + "選んだ場面が3つより少ないときは、残りを" + ("AIが" if api else "自動で") + "ほかの場面から選びます。"))
-        pool = rc_thumb.load_pool(tdir) if rc_thumb.pool_valid(page.out) else {}
-        work = tdir / "_candidates"
-        cands = sorted((c for c in pool.get("cands", []) if (work / str(c.get("file", ""))).exists()),
-                       key=lambda c: c.get("ot", 0))
-        used = rc_thumb._used_times(tdir)
-        self.order: list[QToolButton] = []
-        self.tiles: list[QToolButton] = []
-        if cands:
-            box = QWidget()
-            grid = QGridLayout(box)
-            grid.setSpacing(8)
-            for k, c in enumerate(cands):
-                b = QToolButton()
-                b.setCheckable(True)
-                b.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-                b.setIcon(QIcon(QPixmap(str(work / c["file"])).scaledToWidth(272, Qt.SmoothTransformation)))
-                b.setIconSize(QSize(272, 153))
-                now = any(abs(float(c["t"]) - u) < 0.05 for u in used)
-                b.setProperty("ot", float(c.get("ot", 0.0)))
-                b.setProperty("cap", f"{rc_thumb.fmt_time(c.get('ot', 0))}{'（今の案）' if now else ''}")
-                b.setText(b.property("cap"))
-                b.setToolTip(f"{c.get('why', '')}（右クリックで大きく開く）")
-                b.setStyleSheet("QToolButton { border: 3px solid transparent; padding: 2px; }"
-                                "QToolButton:checked { border: 3px solid #e09a00; background: #fff3d6; font-weight: bold; }")
-                b.toggled.connect(lambda on, b=b: self._toggle(b, on))
-                b.setContextMenuPolicy(Qt.CustomContextMenu)
-                b.customContextMenuRequested.connect(lambda _p, f=work / c["file"]: open_path(f))
-                grid.addWidget(b, k // 4, k % 4)
-                self.tiles.append(b)
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            scroll.setWidget(box)
-            lay.addWidget(scroll, 1)
-        else:
-            empty = QLabel("場面の一覧がまだありません（カットを変えたときも作り直しが要ります）。"
-                           "「ほかの場面も出す」を押すと、動画全体から場面を取り出します。")
-            empty.setWordWrap(True)
-            lay.addWidget(empty)
-            lay.addStretch(1)
-        trow = QHBoxLayout()
-        trow.addWidget(QLabel("時刻で指定:"))
-        self.times = QLineEdit()
-        self.times.setPlaceholderText("完成動画の時刻（例: 1:23, 4:56）。上で選んだ場面の後に続きます")
-        self.times.returnPressed.connect(self._make)
-        trow.addWidget(self.times, 1)
-        lay.addLayout(trow)
-        self.status = QLabel("")
-        self.status.setStyleSheet("color: #c0392b;")
-        lay.addWidget(self.status)
-        row = QHBoxLayout()
-        more = QPushButton(f"ほかの場面も出す（＋{rc_thumb.N_CANDIDATES}）")
-        more.setToolTip("今の一覧とは別の所を、動画全体から取り出して足します（サムネイル案は作り直しません）。")
-        more.clicked.connect(lambda: (self.accept(), self.page.thumbnails(more=True)))
-        self.b_make = QPushButton("選んだ場面で作る")
-        self.b_make.setDefault(True)
-        self.b_make.clicked.connect(self._make)
-        close = QPushButton("閉じる")
-        close.clicked.connect(self.reject)
-        row.addWidget(more)
-        row.addStretch(1)
-        row.addWidget(self.b_make)
-        row.addWidget(close)
-        lay.addLayout(row)
-
-    def _toggle(self, b: QToolButton, on: bool):
-        if on and b not in self.order:
-            if len(self.order) >= self.MAX:
-                b.blockSignals(True)
-                b.setChecked(False)
-                b.blockSignals(False)
-                self.status.setText(f"選べるのは{self.MAX}つまでです。外したい場面をもう一度押してください。")
-                return
-            self.order.append(b)
-        elif not on and b in self.order:
-            self.order.remove(b)
-        self.status.setText("")
-        for t in self.tiles:
-            k = self.order.index(t) if t in self.order else -1
-            t.setText((f"{self.MARKS[k]} " if k >= 0 else "") + t.property("cap"))
-
-    def scenes(self) -> list[float] | None:
-        """選んだ場面（完成動画の時刻・秒）。おかしいときは理由を出して None"""
-        out = [float(b.property("ot")) for b in self.order]
-        try:
-            typed = self.T.parse_times(self.times.text())
-        except ValueError as e:
-            self.status.setText(str(e))
-            return None
-        for t in typed:
-            if all(abs(t - u) > 0.5 for u in out):
-                out.append(t)
-        if not out:
-            self.status.setText("場面をクリックして選ぶか、時刻を入れてください。")
-            return None
-        if len(out) > self.MAX:
-            self.status.setText(f"場面は{self.MAX}つまでです（今 {len(out)}つ）。")
-            return None
-        return out
-
-    def _make(self):
-        s = self.scenes()
-        if s:
-            self.accept()
-            self.page.thumbnails(scenes=s)
-
-
 class YouTubeDialog(QDialog):
     """YouTube への投稿：Studio で動画をアップ → ツールがタイトル等を設定"""
 
@@ -1191,7 +943,7 @@ class YouTubeDialog(QDialog):
         b_folder = QPushButton("完成動画のフォルダを開く")
         b_folder.clicked.connect(lambda: open_path(self.out))
         b_apply = QPushButton("② アップした動画に設定を反映")
-        b_apply.setStyleSheet("background: #C53030; color: white; font-weight: bold;")
+        rc_theme.style(b_apply, kind="danger")
         b_apply.clicked.connect(self._apply)
         b_upload = QPushButton("APIで動画ごとアップロード（審査済みの人向け）")
         b_upload.clicked.connect(self._upload)
@@ -1209,7 +961,7 @@ class YouTubeDialog(QDialog):
 
         self.notice = QLabel(self.meta.get("notice", ""))
         self.notice.setWordWrap(True)
-        self.notice.setStyleSheet("background: #FFF3C4; color: #1A202C; padding: 6px;")
+        rc_theme.style(self.notice, role="notice")
         self.notice.setVisible(bool(self.meta.get("notice")))
         self.meta.pop("notice", None)
 
@@ -1238,13 +990,13 @@ class YouTubeDialog(QDialog):
     def _refresh_conn(self):
         if self.Y.token_path().exists():
             self.conn.setText("✔ Googleアカウントと連携済み")
-            self.conn.setStyleSheet("color: #2F855A;")
+            rc_theme.style(self.conn, role="ok")
         elif self.Y.client_secret_path().exists():
             self.conn.setText("準備OK：「Googleアカウントと連携」を押してください")
-            self.conn.setStyleSheet("color: #C05621;")
+            rc_theme.style(self.conn, role="warn")
         else:
             self.conn.setText("⚠ Googleとの連携は未設定（README「YouTube連携の準備」参照）")
-            self.conn.setStyleSheet("color: #C05621;")
+            rc_theme.style(self.conn, role="warn")
 
     def _pick_secret(self):
         f, _ = QFileDialog.getOpenFileName(self, "Google Cloud でダウンロードした client_secret_….json を選ぶ",
@@ -1421,7 +1173,7 @@ class ReviewPage(QWidget):
         self.folder = QLabel("荒編集が終わると、ここで結果を確認できます。")
         self.folder.setStyleSheet("font-weight: bold;")
         self.summary = QLabel("")
-        self.summary.setStyleSheet("color: #555;")
+        rc_theme.style(self.summary, role="sub")
         open_btn = QPushButton("別の結果を開く…")
         open_btn.clicked.connect(self._open_other)
         self.b_other = open_btn
@@ -1539,13 +1291,13 @@ class ReviewPage(QWidget):
         self.b_plan = QPushButton("演出プランを作る")
         self.b_prev = QPushButton("最初の60秒を試し書き出し")
         self.b_final = QPushButton("完成動画を書き出す")
-        self.b_final.setStyleSheet("QPushButton { background: #2B6CB0; color: white; font-weight: bold; }" + DISABLED_CSS)
+        rc_theme.style(self.b_final, kind="primary")
         self.b_play = QPushButton("完成動画を再生")
         self.b_thumb = QPushButton("サムネイル案")
         self.b_thumb.setToolTip("動画の中からサムネイルに向いた場面を選び、文字入りの案を9枚作ります")
         self.b_thumb.clicked.connect(self.thumbnails)
         self.b_yt = QPushButton("YouTubeへ")
-        self.b_yt.setStyleSheet("QPushButton { background: #C53030; color: white; font-weight: bold; }" + DISABLED_CSS)
+        rc_theme.style(self.b_yt, kind="danger")
         self.b_yt.clicked.connect(lambda: YouTubeDialog(self).exec())
         self.b_apply.clicked.connect(self.apply_cuts)
         self.b_xml.clicked.connect(self._open_xml)
@@ -1553,15 +1305,34 @@ class ReviewPage(QWidget):
         self.b_prev.clicked.connect(lambda: self.render(preview=True))
         self.b_final.clicked.connect(lambda: self.render(preview=False))
         self.b_play.clicked.connect(self._play_final)
+        # 流れの順（① カット → ② 演出 → ③ 書き出し → ④ 公開）にまとめて並べる
         bl = QHBoxLayout()
-        for b in (self.b_apply, self.b_xml):
-            bl.addWidget(b)
-        bl.addStretch()
-        sep = QFrame()
-        sep.setFrameShape(QFrame.VLine)
-        bl.addWidget(sep)
-        for b in (self.b_plan, self.b_prev, self.b_final, self.b_play, self.b_thumb, self.b_yt):
-            bl.addWidget(b)
+        bl.setSpacing(6)
+        self.bar_groups: dict[str, QHBoxLayout] = {}
+        for k, (key, title, btns) in enumerate((
+                ("cut", "① カット", (self.b_apply, self.b_xml)),
+                ("plan", "② 演出", (self.b_plan,)),
+                ("render", "③ 書き出し", (self.b_prev, self.b_final, self.b_play)),
+                ("publish", "④ 公開", (self.b_thumb, self.b_yt)))):
+            if k:
+                sep = QFrame()
+                sep.setFrameShape(QFrame.VLine)
+                sep.setProperty("role", "vsep")
+                bl.addWidget(sep)
+            col = QVBoxLayout()
+            col.setSpacing(2)
+            cap = QLabel(title)
+            cap.setProperty("role", "group")
+            row = QHBoxLayout()
+            row.setSpacing(6)
+            for b in btns:
+                row.addWidget(b)
+            col.addWidget(cap)
+            col.addLayout(row)
+            bl.addLayout(col)
+            self.bar_groups[key] = row
+            if key == "plan":
+                bl.addStretch(1)
 
         # 言葉で指示して、AIにやり直してもらう
         self.ask = QLineEdit()
@@ -1579,9 +1350,13 @@ class ReviewPage(QWidget):
         ask_row.addWidget(self.b_redo_cut)
         ask_row.addWidget(self.b_redo_plan)
 
-        # 拡張機能（gui_ext_*.py）が「確認・仕上げ」タブにボタンを追加する場所
+        # 拡張機能（gui_ext_*.py）が「確認・仕上げ」タブにボタンを追加する場所。
+        # 読み込みが終わったら organize_bar が、ここのボタンを上のまとまりのメニュー（「ショート」「その他の機能」）にまとめる。
+        # ボタンに property "bar" を付けると入る先が決まる: "shorts"=ショートのメニュー / 付けなければ「その他の機能」 /
+        # "cut"・"plan"・"render"・"publish"=流れのまとまりにボタンのまま置く
         self.ext_bar = QHBoxLayout()
         self.ext_bar.addStretch()
+        self.bar_menus: dict[str, QToolButton] = {}
 
         lay = QVBoxLayout(self)
         lay.addLayout(top)
@@ -1590,6 +1365,77 @@ class ReviewPage(QWidget):
         lay.addLayout(self.ext_bar)
         lay.addLayout(bl)
         self._update_buttons()
+
+    # ---------- ボタン列の整理 ----------
+    BAR_MENUS = (("shorts", "ショート", "publish", "本編から切り出すショート・素材全体を1本にしたショートを作ります"),
+                 ("more", "その他の機能", "publish", "区間の書き出し・英語字幕・色合わせなど、たまに使う機能です"))
+
+    def organize_bar(self):
+        """拡張が ext_bar に足したボタンを、メニューにまとめる（ボタンそのものは残し、メニューから押す）。
+        ボタンの名前・押せるかどうかは、メニューを開くたびにボタンに合わせる"""
+        items = [self.ext_bar.itemAt(i).widget() for i in range(self.ext_bar.count())]
+        groups: dict[str, list] = {}
+        for w in items:
+            if w is None or w.property("bar_done"):
+                continue
+            key = w.property("bar") or "more"
+            if key in self.bar_groups:   # 流れのまとまりにそのまま置くボタン（出す・隠すは拡張が決める）
+                self.ext_bar.removeWidget(w)
+                self.bar_groups[key].addWidget(w)
+                w.setProperty("bar_done", True)
+                continue
+            groups.setdefault(key if key in [k for k, *_ in self.BAR_MENUS] else "more", []).append(w)
+            w.setProperty("bar_done", True)
+        for key, title, where, tip in self.BAR_MENUS:
+            ws = groups.get(key)
+            if not ws:
+                continue
+            tb = self.bar_menus.get(key)
+            if tb is None:
+                tb = QToolButton()
+                tb.setText(title + "  ")
+                tb.setToolTip(tip)
+                tb.setPopupMode(QToolButton.InstantPopup)
+                tb.setProperty("role", "menu")
+                tb.setMenu(QMenu(tb))
+                tb.menu().setToolTipsVisible(True)
+                tb.menu().aboutToShow.connect(lambda tb=tb: self._sync_bar_menu(tb))
+                tb.setProperty("bar_items", [])
+                row = self.bar_groups[where]
+                row.insertWidget(max(0, row.indexOf(self.b_yt)), tb)
+                self.bar_menus[key] = tb
+            pairs = tb.property("bar_items")
+            for w in ws:
+                if isinstance(w, QPushButton):
+                    act = tb.menu().addAction(w.text())
+                    act.triggered.connect(lambda _=False, w=w: w.click())
+                    w.setVisible(False)
+                else:   # 本数の欄など: メニューの中にそのまま置く
+                    act = QWidgetAction(tb)
+                    box = QWidget()
+                    hl = QHBoxLayout(box)
+                    hl.setContentsMargins(22, 2, 22, 2)
+                    self.ext_bar.removeWidget(w)
+                    hl.addWidget(w)
+                    hl.addStretch(1)
+                    act.setDefaultWidget(box)
+                    tb.menu().addAction(act)
+                pairs.append((w, act))
+            tb.setProperty("bar_items", pairs)
+        self._update_bar_menus()
+
+    def _sync_bar_menu(self, tb):
+        for w, act in tb.property("bar_items") or []:
+            if isinstance(w, QPushButton):
+                act.setText(w.text())
+                act.setToolTip(w.toolTip())
+                act.setEnabled(w.isEnabled())
+                act.setVisible(not w.property("bar_hidden"))
+
+    def _update_bar_menus(self):
+        """メニューのボタンは、中のどれか1つでも押せれば押せる"""
+        for tb in self.bar_menus.values():
+            tb.setEnabled(any(w.isEnabled() for w, _a in tb.property("bar_items") or [] if isinstance(w, QPushButton)))
 
     # ---------- 読み込み ----------
     def _open_other(self):
@@ -2265,6 +2111,18 @@ class MainWindow(QMainWindow):
                 print(f"拡張 {f.stem} を読み込めませんでした: {e}", file=sys.stderr)
                 self.runner.log.appendPlainText(f"[注意] 拡張 {f.name} を読み込めませんでした: {e}")
                 failed.append(f.name)
+        try:
+            self.review.organize_bar()   # 拡張が足したボタンを、メニューにまとめる
+            orig = self.review._update_buttons
+
+            def update():
+                orig()
+                self.review._update_bar_menus()
+            self.review._update_buttons = update
+            self.review._update_buttons()
+        except Exception:  # noqa: BLE001  まとめられなくても、ボタンは下の列に残るので使える
+            with open(APP_DIR / "gui_error.log", "a", encoding="utf-8") as fp:
+                fp.write(f"===== ボタン列の整理 =====\n{traceback.format_exc()}\n")
         if failed:
             # pythonw で起動していると stderr は見えないので、画面の下に出す
             self.statusBar().showMessage(f"拡張機能 {'・'.join(failed)} を読み込めませんでした"

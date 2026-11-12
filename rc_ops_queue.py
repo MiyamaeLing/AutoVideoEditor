@@ -20,10 +20,11 @@ import rc_ops
 APP_DIR = Path(__file__).resolve().parent
 DEFAULT_TEMPLATE = APP_DIR / "templates" / "default"
 
-GOALS = {"rough": "荒編集だけ", "finish": "完成動画まで", "thumbs": "サムネイルまで"}
+GOALS = {"rough": "荒編集だけ", "finish": "完成動画まで", "thumbs": "サムネイルまで",
+         "short": "ショート（縦型・全体を1本に）まで"}
 STATUS_JA = {"waiting": "順番待ち", "running": "処理中", "done": "完了", "error": "エラー"}
 MODES_JA = {"talk": "レビュー・解説", "craft": "工作", "outdoor": "屋外企画"}
-STEP_JA = {"rough": "荒編集", "finish": "仕上げ（完成動画）"}
+STEP_JA = {"rough": "荒編集", "finish": "仕上げ（完成動画）", "plan": "演出プラン", "short": "縦型ショートの書き出し"}
 
 
 def queue_path() -> Path:
@@ -199,6 +200,8 @@ def item_name(it: dict) -> str:
 
 
 def steps_for(goal: str) -> list[str]:
+    if goal == "short":   # 横長の完成動画は作らず、素材全体を1本の縦型ショートに（shorts.py --whole）
+        return ["rough", "plan", "short"]
     return ["rough"] if goal == "rough" else ["rough", "finish"]
 
 
@@ -215,6 +218,10 @@ def step_args(it: dict, step: str) -> tuple[str, list[str]]:
             args += ["--glossary", str(gp)]
         return "roughcut.py", args
     args = [str(out), "--template", it["template"], "--llm", it["llm"], "--effort", it["effort"]]
+    if step == "short":
+        return "shorts.py", args + ["--whole"]
+    if step == "plan":   # テロップ・BGMをショートに入れるための演出プラン（書き出しはしない）
+        return "finish.py", args + ["--plan-only"]
     edited = out / "plan_edited.json"
     if edited.exists():
         args += ["--plan", str(edited)]   # 画面で直した演出があれば、それで書き出す
@@ -274,6 +281,8 @@ def _result(it: dict) -> dict:
     if xml.exists():
         res["xml"] = str(xml)
     mp4 = out / f"{stem}_完成.mp4"
+    if it["goal"] == "short":
+        mp4 = out / f"{stem}_ショート.mp4"
     if mp4.exists():
         res["video"] = str(mp4)
     thumbs = sorted((out / "thumbnails").glob("thumb_*.jpg")) if (out / "thumbnails").is_dir() else []
@@ -289,7 +298,7 @@ def _result(it: dict) -> dict:
     except (OSError, ValueError):
         pass
     try:
-        fi = json.loads((out / "final_info.json").read_text(encoding="utf-8"))
+        fi = json.loads((out / ("short_whole.json" if it["goal"] == "short" else "final_info.json")).read_text(encoding="utf-8"))
         if mp4.exists():
             res["final_sec"] = fi.get("duration")
     except (OSError, ValueError):

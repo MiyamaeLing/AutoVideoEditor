@@ -883,7 +883,7 @@ def generate_whole(out_dir: Path, tpl: Template, llm: str = "api", effort: str =
     over = dur > WHOLE_LIMIT
     if over:
         print(f"  [注意] {WHOLE_LIMIT / 60:.0f}分を超えています。YouTube ではショートとして扱われません"
-              "（カットを増やすか、「ショートを作る」で短い区間を切り出してください）。このまま作ります。")
+              "（カットを増やすか、「本編から切り出して作る」で短い区間を切り出してください）。このまま作ります。")
     if llm == "manual":
         print("  [お知らせ] タイトル・説明文は、荒編集のタイトル案から作ります（claude.ai への貼り付けはありません）。")
     pick, usage = whole_pick(pj, llm, effort)

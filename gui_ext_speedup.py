@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from gui_util import fmt as _fmt
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QHeaderView, QLabel, QMessageBox, QPushButton, QTableWidget, QVBoxLayout, QWidget,
@@ -18,13 +19,6 @@ from PySide6.QtWidgets import (
 import rc_speedup
 
 CHOICES = [("fast", k) for k in (2, 3, 4, 6, 8)] + [("timelapse", k) for k in (10, 15, 20, 30)]
-
-
-def _fmt(t: float) -> str:
-    t = max(0, t)
-    h, r = divmod(int(t), 3600)
-    m, s = divmod(r, 60)
-    return f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
 
 
 def _label(style: str, k: float) -> str:
@@ -209,6 +203,7 @@ def register(win):
     rv.ext_bar.insertWidget(0, b)
     rv.speedup_xml_button = b
     b.setVisible(False)   # 工作モードの結果を開いたときに出す
+    b.setProperty("bar", "cut")   # 「① カット」のまとまり（Premiere用XMLの隣）に置く
 
     orig_update = rv._update_buttons
 

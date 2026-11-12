@@ -445,6 +445,28 @@ for n in ("plan_edited.json", "plan_used.json"):
     if (Path(OUT) / (n + ".bak")).exists():
         (Path(OUT) / (n + ".bak")).rename(Path(OUT) / n)
 w.review.make_plan = real_plan
+# ボタン列: 拡張のボタンは「ショート」「その他の機能」のメニューにまとまる（押せるかどうか・名前はボタンに合わせる）
+rv = w.review
+tb = rv.bar_menus.get("shorts")
+rv._sync_bar_menu(tb)
+acts = [a for a in tb.menu().actions() if a.text()]
+res["bar_shorts"] = [a.text() for a in acts]
+res["bar_hidden"] = not ext.btn.isVisibleTo(rv) and tb.isVisibleTo(rv) and tb.isEnabled()
+n_calls = len(calls)
+acts[0].trigger()
+res["bar_click"] = len(calls) == n_calls + 1 and calls[-1][0] == "shorts.py"
+more = rv.bar_menus.get("more")
+rv._sync_bar_menu(more)
+res["bar_more"] = len([a for a in more.menu().actions() if a.text()])
+res["bar_groups"] = sorted(rv.bar_groups)
+left = [rv.ext_bar.itemAt(i).widget() for i in range(rv.ext_bar.count())]
+res["bar_left"] = [x.text() for x in left if x is not None and x.isVisibleTo(rv)]
+w.runner.proc = object()
+rv._update_buttons()
+rv._sync_bar_menu(tb)
+res["bar_busy"] = not tb.isEnabled() and not any(a.isEnabled() for a in acts)
+w.runner.proc = None
+rv._update_buttons()
 res["target_default"] = w.create.target.currentData()
 before = w.create.btn_full.text()
 w.create.target.setCurrentIndex(w.create.target.findData("short"))
@@ -500,6 +522,14 @@ def t_gui(check, proj: Path, fx: Path):
     check("ショート（全体を1本に）: ボタンで shorts.py --whole を実行", r["whole_btn"] and wc[0] == "shorts.py"
           and "--whole" in wc[1] and "--count" not in wc[1], str(wc))
     check("ショート（全体を1本に）: 一気に作るときは、演出プランが無ければ先に作る", r["plan_first"])
+    check("ボタン列: 流れの順（カット・演出・書き出し・公開）にまとめ、拡張のボタンは下の列に残さない",
+          r["bar_groups"] == ["cut", "plan", "publish", "render"] and r["bar_left"] == [], str(r["bar_left"]))
+    check("ボタン列: ショートの操作は「ショート」のメニューから（ボタンと同じ名前・同じ動き）",
+          r["bar_hidden"] and r["bar_click"] and r["bar_shorts"][0] == "本編から切り出して作る"
+          and "全体を1本のショートに" in r["bar_shorts"] and r["bar_shorts"][-1].startswith("ショートを見る"),
+          str(r["bar_shorts"]))
+    check("ボタン列: たまに使う機能は「その他の機能」に。処理中はメニューも押せない", r["bar_more"] >= 3 and r["bar_busy"],
+          str(r["bar_more"]))
     check("ショート（全体を1本に）: 「作成」タブの「作るもの」で切り替える（初めは横長の動画）",
           r["target_default"] == "video" and r["target_text"][0] != r["target_text"][1] and "ショート" in r["target_text"][1],
           str(r["target_text"]))

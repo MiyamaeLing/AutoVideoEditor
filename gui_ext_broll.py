@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from gui_util import fmt as _fmt
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
@@ -28,13 +29,6 @@ def _read_json(p: Path):
         return json.loads(Path(p).read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001
         return None
-
-
-def _fmt(t: float) -> str:
-    t = max(0, t)
-    h, r = divmod(int(t), 3600)
-    m, s = divmod(r, 60)
-    return f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
 
 
 class BrollPanel(QWidget):

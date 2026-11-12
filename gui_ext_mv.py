@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import rc_theme
 import json
 import sys
 from pathlib import Path
@@ -251,8 +252,7 @@ class MvTab(QWidget):
         self.b_make.setToolTip("ビートに合わせてカットをつなぎ、mp4 と Premiere用XML を作ります")
         for b in (self.b_analyze, self.b_preview, self.b_make):
             b.setMinimumHeight(40)
-        self.b_make.setStyleSheet("QPushButton { font-size: 15px; font-weight: bold; background: #2B6CB0; color: white; }"
-                                  + G.DISABLED_CSS)
+        rc_theme.style(self.b_make, kind="primary", big=True)
         self.b_analyze.clicked.connect(self.analyze)
         self.b_preview.clicked.connect(lambda: self.make(preview=True))
         self.b_make.clicked.connect(lambda: self.make(preview=False))
@@ -265,7 +265,7 @@ class MvTab(QWidget):
         self.graph = SongGraph()
         self.info = QLabel("")
         self.info.setWordWrap(True)
-        self.info.setStyleSheet("color: #2D3748;")
+        rc_theme.style(self.info, role="sub")
         self.b_play = QPushButton("MVラフを再生")
         self.b_play.clicked.connect(self._play)
         self.b_xml = QPushButton("Premiere用XMLを開く")

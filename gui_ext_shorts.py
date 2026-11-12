@@ -1,6 +1,6 @@
 """画面（GUI）の拡張：縦型ショート
 
-「確認・仕上げ」タブに「ショートを作る」ボタンと、できたショートの一覧（再生・フォルダを開く）を追加する。
+「確認・仕上げ」タブの「ショート」のメニュー（本編から切り出して作る・全体を1本に・見る）と、できたショートの一覧（再生・フォルダを開く）を追加する。
 中身の処理は shorts.py をそのまま呼び出している。
 """
 from __future__ import annotations
@@ -9,6 +9,8 @@ import json
 import sys
 from pathlib import Path
 
+import rc_theme
+from gui_util import fmt as _fmt, gui_module as _gui
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication, QPixmap
 from PySide6.QtWidgets import (
@@ -18,18 +20,6 @@ from PySide6.QtWidgets import (
 
 TIP = ("本編の中から、ショートに向いた所（30〜60秒・最初につかみがある所）を選んで、"
        "縦型（1080x1920）の動画を最大3本作ります。人の顔を追いかけて切り抜き、大きな字幕とタイトルを入れます。")
-
-
-def _gui(win):
-    """gui.py のモジュール（python gui.py で起動したときは __main__）"""
-    return sys.modules[type(win).__module__]
-
-
-def _fmt(t: float) -> str:
-    t = max(0, int(t))
-    h, r = divmod(t, 3600)
-    m, s = divmod(r, 60)
-    return f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
 
 
 WHOLE_TIP = ("区間を選ばず、カットした素材全体を1本の縦型ショート（1080x1920）にします（ショートだけ作りたいとき）。\n"
@@ -79,7 +69,7 @@ class ShortsDialog(QDialog):
         for s in shorts:
             row.addWidget(self._card(g, sdir, s))
         if not shorts and not whole:
-            row.addWidget(QLabel("まだショートがありません。「ショートを作る」を押してください。"))
+            row.addWidget(QLabel("まだショートがありません。「ショート」のメニューから作ってください。"))
         row.addStretch(1)
         box = QWidget()
         box.setLayout(row)
@@ -90,7 +80,7 @@ class ShortsDialog(QDialog):
         bl = QHBoxLayout()
         folder = QPushButton("フォルダを開く")
         folder.clicked.connect(lambda: g.open_path(sdir))
-        redo = QPushButton("作り直す")
+        redo = QPushButton("切り出しを作り直す")
         redo.setToolTip("今の設定（「作成」タブの AI の欄）で、本編から切り出すショートを作り直します")
         redo.clicked.connect(lambda: (self.accept(), self.ext.make()))
         redo_whole = QPushButton("全体のショートを作り直す")
@@ -141,7 +131,7 @@ class ShortsDialog(QDialog):
         cl.addStretch(1)
         br = QHBoxLayout()
         play = QPushButton("▶ 再生")
-        play.setStyleSheet("QPushButton { background: #2B6CB0; color: white; font-weight: bold; }")
+        rc_theme.style(play, kind="primary")
         play.clicked.connect(lambda: g.open_path(sdir / s["file"]))
         copy = QPushButton("コピー")
         copy.setToolTip("タイトルと説明文をコピーします")
@@ -158,10 +148,8 @@ class ShortsExt:
     def __init__(self, win):
         self.win = win
         rv = win.review
-        self.btn = QPushButton("ショートを作る")
+        self.btn = QPushButton("本編から切り出して作る")
         self.btn.setToolTip(TIP)
-        self.btn.setStyleSheet("QPushButton { background: #D53F8C; color: white; font-weight: bold; }"
-                               " QPushButton:disabled { background: #CBD5E0; color: #F7FAFC; }")
         self.btn.clicked.connect(lambda: self.make())
         self.count = QSpinBox()
         self.count.setRange(1, 3)
@@ -171,12 +159,11 @@ class ShortsExt:
         self.count.setToolTip("作るショートの本数の上限です（良い所が少なければ、少なくなります）")
         self.whole = QPushButton("全体を1本のショートに")
         self.whole.setToolTip(WHOLE_TIP)
-        self.whole.setStyleSheet("QPushButton { background: #B83280; color: white; font-weight: bold; }"
-                                 " QPushButton:disabled { background: #CBD5E0; color: #F7FAFC; }")
         self.whole.clicked.connect(lambda: self.make_whole())
         self.view = QPushButton("ショートを見る")
         self.view.clicked.connect(self.show_list)
         for i, w in enumerate((self.btn, self.count, self.whole, self.view)):
+            w.setProperty("bar", "shorts")   # 「ショート」のメニューにまとめる
             rv.ext_bar.insertWidget(i, w)
         # 「確認・仕上げ」タブのボタンの状態が変わるとき（読み込み・処理の開始と終了）に、こちらも合わせる
         orig = rv._update_buttons

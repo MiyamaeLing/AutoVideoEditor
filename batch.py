@@ -9,7 +9,8 @@
   python batch.py run --shutdown                                 # 全部終わったらPCの電源を切る
   python batch.py retry <id> / remove <id> / clear               # やり直す・消す・終わったものを片付ける
 
-goal（どこまで作るか）: rough=荒編集だけ / finish=完成動画まで / thumbs=サムネイルまで
+goal（どこまで作るか）: rough=荒編集だけ / finish=完成動画まで / thumbs=サムネイルまで /
+                        short=縦型ショートまで（素材全体を1本に。横長の完成動画は作らない）
 途中で止まっても、もう一度 run すると続きから進めます。処理中は Windows がスリープしません。
 """
 from __future__ import annotations
@@ -43,7 +44,7 @@ def main():
     a.add_argument("inputs", nargs="+", type=Path)
     a.add_argument("--join", action="store_true", help="入れたファイルを、分割された1本の動画として扱う")
     a.add_argument("--goal", choices=GOALS.keys(), default="finish",
-                   help="rough=荒編集だけ / finish=完成動画まで / thumbs=サムネイルまで（初期値: finish）")
+                   help="rough=荒編集だけ / finish=完成動画まで / thumbs=サムネイルまで / short=縦型ショートまで（初期値: finish）")
     a.add_argument("--mode", choices=["talk", "craft", "outdoor"], default="talk")
     a.add_argument("--llm", choices=["api", "none"], default="api")
     a.add_argument("--cam2", nargs="+", type=Path, help="2台目カメラの素材（--join のとき、または1本だけのとき）")

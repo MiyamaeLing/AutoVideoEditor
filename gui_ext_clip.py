@@ -8,6 +8,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from gui_util import gui_module as _gui
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSlider,
@@ -18,11 +19,6 @@ import rc_clip
 
 TIP = "完成動画を再生しながら開始と終了を決めて、その区間だけを1本の動画に書き出します（SNS用の切り抜きなど）"
 FIRST_LEN = 30.0   # はじめて開いたときの区間の長さ（秒）
-
-
-def _gui(win):
-    """gui.py のモジュール（python gui.py で起動したときは __main__）"""
-    return sys.modules[type(win).__module__]
 
 
 def _set_role(w, role: str):

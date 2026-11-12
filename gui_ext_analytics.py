@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import rc_theme
 import sys
 from pathlib import Path
 
@@ -22,8 +23,6 @@ AUDIT_DOC = APP_DIR / "docs" / "youtube_audit_draft.md"
 AUDIT_FORM = "https://support.google.com/youtube/contact/yt_api_form"
 TASK_JA = {"analytics": "視聴維持率を分析する", "comments": "コメントを要約する", "promo": "告知文を作る",
            "trends": "チャンネルの傾向をまとめる"}
-BTN_CSS = "QPushButton { background: #2B6CB0; color: white; font-weight: bold; padding: 4px 10px; }" \
-          " QPushButton:disabled { background: #CBD5E0; color: #F7FAFC; }"
 
 
 def _ro(text) -> QTableWidgetItem:
@@ -117,7 +116,7 @@ class AnalyticsPage(QWidget):
     def _retention_tab(self) -> QWidget:
         w = QWidget()
         self.b_ret = QPushButton("視聴維持率を分析")
-        self.b_ret.setStyleSheet(BTN_CSS)
+        rc_theme.style(self.b_ret, kind="primary")
         self.b_ret.setToolTip("YouTube から視聴維持率を取り、視聴者が減った場面の原因と改善案を AI が考えます")
         self.b_ret.clicked.connect(lambda: self.run_task("analytics", ["--retention"]))
         b_rep = QPushButton("レポートを開く")
@@ -166,7 +165,7 @@ class AnalyticsPage(QWidget):
     def _comments_tab(self) -> QWidget:
         w = QWidget()
         self.b_com = QPushButton("コメントを要約して返信案を作る")
-        self.b_com.setStyleSheet(BTN_CSS)
+        rc_theme.style(self.b_com, kind="primary")
         self.b_com.clicked.connect(lambda: self.run_task("comments", ["--comments"]))
         b_rep = QPushButton("まとめを開く")
         b_rep.clicked.connect(lambda: self._open_file("comments.md"))
@@ -212,7 +211,7 @@ class AnalyticsPage(QWidget):
     def _promo_tab(self) -> QWidget:
         w = QWidget()
         self.b_promo = QPushButton("告知文を作る")
-        self.b_promo.setStyleSheet(BTN_CSS)
+        rc_theme.style(self.b_promo, kind="primary")
         self.b_promo.clicked.connect(lambda: self.run_task("promo", ["--promo"]))
         b_rep = QPushButton("まとめを開く")
         b_rep.clicked.connect(lambda: self._open_file("promo.md"))
@@ -237,7 +236,7 @@ class AnalyticsPage(QWidget):
     def _trends_tab(self) -> QWidget:
         w = QWidget()
         self.b_trend = QPushButton("傾向をまとめ直す")
-        self.b_trend.setStyleSheet(BTN_CSS)
+        rc_theme.style(self.b_trend, kind="primary")
         self.b_trend.setToolTip("分析した動画すべてから、くり返し出てくる傾向を AI がまとめます")
         self.b_trend.clicked.connect(lambda: self.run_task("trends", ["--trends"], need_folder=False))
         self.use = QCheckBox("この傾向を、次の荒編集（カット判定）と演出プランの AI に伝える")
@@ -277,7 +276,7 @@ class AnalyticsPage(QWidget):
             "※ 審査をしなくても、「YouTube Studio にアップ → このツールで設定を反映」の流れなら、今までどおり使えます。")
         text.setTextFormat(Qt.RichText)
         b_doc = QPushButton("申請の下書きを開く")
-        b_doc.setStyleSheet(BTN_CSS)
+        rc_theme.style(b_doc, kind="primary")
         b_doc.clicked.connect(lambda: self.G.open_path(AUDIT_DOC))
         b_form = QPushButton("申請フォームを開く")
         b_form.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(AUDIT_FORM)))
@@ -441,7 +440,7 @@ class AnalyticsPage(QWidget):
             def upd():
                 n = A.x_length(ed.toPlainText())
                 cnt.setText(f"{n}/280")
-                cnt.setStyleSheet("color: #C53030; font-weight: bold;" if n > 280 else "")
+                rc_theme.style(cnt, role="error" if n > 280 else "")
             ed.textChanged.connect(upd)
             upd()
             side.addWidget(cnt)
@@ -495,13 +494,13 @@ class AnalyticsPage(QWidget):
         st = A.link_state()
         if st == "ok":
             self.link.setText("✔ Googleと連携済み（分析も使えます）")
-            self.link.setStyleSheet("color: #2F855A;")
+            rc_theme.style(self.link, role="ok")
         elif st == "old":
             self.link.setText("⚠ 分析の許可がありません。「Googleと連携し直す」を押してください")
-            self.link.setStyleSheet("color: #C05621; font-weight: bold;")
+            rc_theme.style(self.link, role="warn")
         else:
             self.link.setText("⚠ Googleと未連携（「確認・仕上げ」→「YouTubeへ」で準備してから）")
-            self.link.setStyleSheet("color: #C05621;")
+            rc_theme.style(self.link, role="warn")
 
     # ================================================================ 実行
     def _busy(self, busy: bool):

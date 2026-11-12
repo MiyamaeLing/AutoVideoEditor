@@ -321,8 +321,22 @@ def t_queue(check, fx: Path):
     check("まとめて: 止まったものは続きから（終わった工程は飛ばす）",
           pr2.returncode == 0 and b2["status"] == "done" and "前回終わっているので飛ばします" in pr2.stdout
           and (qb / "C0001_完成.mp4").exists() and pr2.stdout.count("文字起こし") == 0, _tail(pr2, 10))
+    # ショートまで: 荒編集 → 演出プラン → 素材全体を1本の縦型ショート（横長の完成動画は作らない）
+    qc = d / "動画C_roughcut"
+    qc.mkdir()
+    shutil.copy(fx / "transcript.json", qc / "transcript.json")
+    ps = _run(base + [str(fx / "C0001.MP4"), str(fx / "C0002.MP4"), "--join", "--goal", "short", "--llm", "none",
+                      "--template", tpl, "--out", str(qc)], fx)
+    pr3 = _run(["batch.py", "--queue", str(qf), "run"], fx)
+    c = Queue(qf).load()[-1]
+    check("まとめて: ショートまで（縦型ショートだけ作り、演出プランも作る）",
+          ps.returncode == 0 and pr3.returncode == 0 and c["status"] == "done"
+          and c["steps_done"] == ["rough", "plan", "short"] and (qc / "C0001_ショート.mp4").exists()
+          and not (qc / "C0001_完成.mp4").exists() and (qc / "plan_used.json").exists()
+          and str(c["result"].get("video", "")).endswith("_ショート.mp4") and c["result"].get("final_sec"),
+          f"{c.get('steps_done')} {c.get('message')}" + _tail(pr3, 8))
     n = Queue(qf).clear_done()
-    check("まとめて: 終わったものを片付ける", n == 2 and Queue(qf).load() == [])
+    check("まとめて: 終わったものを片付ける", n == 3 and Queue(qf).load() == [])
 
 
 # ---------------------------------------------------------------- 困ったときの情報
