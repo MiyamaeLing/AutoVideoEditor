@@ -182,6 +182,10 @@ class Runner(QWidget):
             key = self.settings.value("api_key", "")
             if key:
                 e.insert("ANTHROPIC_API_KEY", key)
+        model = str(self.settings.value("model", "") or "")   # 「作成」タブの「モデル」。空（おまかせ）なら何も足さない
+        if model:
+            e.insert("ROUGHCUT_MODEL", model)      # Claude API
+            e.insert("ROUGHCUT_CC_MODEL", model)   # サブスクの Claude Code（claude --model）
         for k in ("ROUGHCUT_REQUEST", "ROUGHCUT_REVISE_BASE"):
             e.remove(k)
         if AI_STATE["request"].strip():
@@ -549,6 +553,21 @@ class CreatePage(QWidget):
         row.addWidget(self.key_btn)
         row.addWidget(self.cc_btn)
         form.addRow("AI", row)
+        # モデル: AIを使う処理（カット・演出・サムネイル・ショートなど）すべてに効く。選んだらすぐ設定に残す
+        import rc_llm
+        self.model = QComboBox()
+        for k, (mid, label, what, price) in enumerate(rc_llm.MODEL_CHOICES):
+            self.model.addItem(label, mid)
+            self.model.setItemData(k, what + (f"（API料金: {price}）" if price else ""), Qt.ToolTipRole)
+        self.model.setCurrentIndex(max(0, self.model.findData(str(st.value("model", "") or ""))))
+        self.model_note = QLabel()
+        rc_theme.style(self.model_note, role="sub")
+        mrow = QHBoxLayout()
+        mrow.addWidget(self.model)
+        mrow.addWidget(self.model_note, 1)
+        self.model_label = QLabel("モデル")
+        form.addRow(self.model_label, mrow)
+        self.model.currentIndexChanged.connect(self._model_changed)
         self.llm.currentIndexChanged.connect(self._llm_changed)
         self._llm_changed()
 
@@ -724,6 +743,26 @@ class CreatePage(QWidget):
         self.key_btn.setVisible(c == "api")
         self.cc_btn.setVisible(c == "cc")
         self.refresh_key()
+        if hasattr(self, "model"):
+            self._model_changed()
+
+    def _model_changed(self, *_):
+        """選んだモデルを設定に残す（次に動かす処理から使う）。AIを使わない設定のときは選べない"""
+        import rc_llm
+        c = self.llm_choice()
+        on = c in ("cc", "api")
+        self.model.setEnabled(on)
+        self.win.settings.setValue("model", self.model.currentData() or "")
+        _id, _label, what, price = rc_llm.MODEL_CHOICES[max(0, self.model.currentIndex())]
+        if not on:
+            tip = "AIを使う設定（Claudeで自動）のときに選べます"
+        elif not price:
+            tip = what
+        elif c == "cc":
+            tip = what + "。サブスクなのでAPI料金はかかりません"
+        else:
+            tip = what + f"。API料金: {price}"
+        self.model_note.setText(tip)
 
     def refresh_key(self):
         if not hasattr(self, "key_label"):

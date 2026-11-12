@@ -13,7 +13,20 @@ from pathlib import Path
 
 from rc_transcribe import Chunk, fmt_ts
 
-MODEL = os.environ.get("ROUGHCUT_MODEL", "claude-opus-5-5")
+DEFAULT_MODEL = "claude-opus-5-5"
+MODEL = os.environ.get("ROUGHCUT_MODEL", "").strip() or DEFAULT_MODEL
+# 画面（「作成」タブの「モデル」）で選べるモデル: (モデルID, 画面に出す名前, 説明, API料金の目安)。"" は「おまかせ」
+MODEL_CHOICES = [
+    ("", "おまかせ（標準）", "Claude API では Opus 5.5、サブスクの Claude Code では Claude Code の設定のモデルを使います", ""),
+    ("claude-opus-5-5", "Opus 5.5（標準・バランス型）", "カット・演出・サムネイルのどれも安定しています",
+     "入力$4／出力$20（100万トークンあたり）"),
+    ("claude-sonnet-5-5", "Sonnet 5.5（速い・安い）", "Opus より速く、ふだんの動画なら十分なことが多いです",
+     "入力$2／出力$10（Opus の約半分）"),
+    ("claude-haiku-5-5", "Haiku 5.5（いちばん速い・安い）", "判断は粗くなるので、試し・下書き向きです",
+     "入力$0.10／出力$0.50（ごくわずか）"),
+    ("claude-fable-5-2", "Fable 5.2（いちばん高性能）", "いちばん賢いモデルです。時間は長くかかります",
+     "入力$8／出力$40（Opus の2倍）"),
+]
 PRICE_IN, PRICE_OUT = 4.0, 20.0  # $/100万トークン（claude-opus-5-5）
 
 MODE_HINT = {
@@ -200,9 +213,9 @@ def _call(client, anthropic, system: str, user: str | list, schema: dict, effort
         messages=[{"role": "user", "content": user}],
         thinking={"type": "adaptive"},
         output_config={"effort": effort, "format": {"type": "json_schema", "schema": schema}},
-        # 安全フィルタで断られた場合に別モデルで自動再実行する
-        betas=["server-side-fallback-2026-07-01"],
-        fallbacks="default",
+        # 安全フィルタで断られた場合に別モデルで自動再実行する（Haiku には、この仕組みが無い）
+        **({} if MODEL.startswith("claude-haiku") else
+           {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}),
     ) as stream:
         msg = stream.get_final_message()
     add_usage(usage, msg)
@@ -216,7 +229,8 @@ def _call(client, anthropic, system: str, user: str | list, schema: dict, effort
 # 別のモデルに切り替わったとき（安全フィルタの fallbacks）の料金（$/100万トークン）。長い名前から順に照合する
 PRICES = {"claude-opus-5-5": (4.0, 20.0), "claude-opus-5": (5.0, 25.0), "claude-opus-4": (5.0, 25.0),
           "claude-sonnet-5": (2.0, 10.0), "claude-sonnet-4": (3.0, 15.0), "claude-haiku-5": (0.10, 0.50),
-          "claude-haiku-4": (1.0, 5.0), "claude-fable": (10.0, 50.0), "claude-mythos": (10.0, 50.0)}
+          "claude-haiku-4": (1.0, 5.0), "claude-fable": (10.0, 50.0), "claude-mythos": (10.0, 50.0),
+          "claude-fable-5-2": (8.0, 40.0), "claude-mythos-5-2": (8.0, 40.0)}
 
 
 def price_of(model) -> tuple[float, float]:

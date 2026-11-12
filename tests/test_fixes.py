@@ -19,6 +19,7 @@
   - 章カードを避けてずらしたテロップに合わせて効果音を鳴らす
   - サムネイル案の画面から、AIに指示して作り直す（thumbs.py --request。AIが「Claude APIで自動」のときだけ）（GUI）
   - サムネイルの場面を選ぶ画面（3つまで・時刻でも指定）・別の場面から選び直す・場面を増やす（GUI）
+  - AIのモデルを「作成」タブで選ぶ（ROUGHCUT_MODEL / ROUGHCUT_CC_MODEL）。料金の数え方・Haiku の呼び出し方
 """
 from __future__ import annotations
 
@@ -615,6 +616,20 @@ rv.thumbnails(more=True)
 w.runner.start, w.check_api_key = real_start2, real_key
 res["scene_args"] = started
 res["more_no_key"] = len(keys) == n_keys == 2
+# --- 「作成」タブの「モデル」: 選ぶとすぐ設定に残り、次に動かす処理に渡る（API・サブスクの両方）---
+c = w.create
+c.llm.setCurrentIndex(c.llm.findData("api", 257))
+c.model.setCurrentIndex(0)
+e0 = w.runner.env()
+res["model_default"] = c.model.currentData() == "" and not e0.contains("ROUGHCUT_MODEL") and not e0.contains("ROUGHCUT_CC_MODEL")
+c.model.setCurrentIndex(c.model.findData("claude-sonnet-5-5"))
+e1 = w.runner.env()
+res["model_env"] = [e1.value("ROUGHCUT_MODEL"), e1.value("ROUGHCUT_CC_MODEL"), w.settings.value("model", "")]
+res["model_note_api"] = c.model_note.text()
+c.llm.setCurrentIndex(c.llm.findData("none"))
+res["model_off"] = not c.model.isEnabled()
+c.model.setCurrentIndex(0)
+res["model_reset"] = w.settings.value("model", "x") == ""
 w.create.llm.setCurrentIndex(w.create.llm.findData("none"))
 print("RESULT " + json.dumps(res, ensure_ascii=False))
 '''
@@ -673,6 +688,10 @@ def t_gui(check, out: Path, fx: Path):
     check("GUI: 指示は thumbs.py --request で渡す", a[:1] == ["thumbs.py"] and "--request" in a
           and a[a.index("--request") + 1] == "案2は文字を左に" and "--text" not in a, str(a))
     check("GUI: サムネイル画面に「場面を選んで作り直す」「別の場面から選び直す」", r["scene_buttons"])
+    check("GUI: モデルは「おまかせ」が初期値（何も渡さない）。選ぶと API・サブスクの両方に渡り、設定に残る",
+          r["model_default"] and r["model_env"] == ["claude-sonnet-5-5"] * 3 and r["model_reset"], str(r["model_env"]))
+    check("GUI: モデルの説明にAPI料金の目安を出す。AIを使わない設定では選べない",
+          "API料金" in r["model_note_api"] and r["model_off"], r["model_note_api"])
     check("GUI: 場面を選ぶ画面に、動画から取り出した場面を並べる（今のカットの候補）",
           r["pool_ok"] and r["scene_tiles"] > 0, f"{r['pool_ok']} {r['scene_tiles']}")
     check("GUI: 場面は3つまで、選んだ順に①②③", r["scene_limit"] and r["scene_marks"] == list("①②③")[:len(r["scene_marks"])]
@@ -684,11 +703,71 @@ def t_gui(check, out: Path, fx: Path):
           and "--more-scenes" in sa[2] and r["more_no_key"], str(sa))
 
 
+# ---------------------------------------------------------------- モデルの選択
+MODEL_CODE = r'''
+import json, sys
+sys.path.insert(0, ROOT)
+import rc_llm
+seen = {}
+
+class Stop(Exception):
+    pass
+
+class Messages:
+    def stream(self, **kw):
+        seen.update(kw)
+        raise Stop()
+
+class Client:
+    class beta:
+        messages = Messages()
+
+try:
+    rc_llm._call(Client(), None, "system", "user", {"type": "object"}, "low", {})
+except Stop:
+    pass
+print("RESULT " + json.dumps({"model": seen.get("model"), "fallbacks": seen.get("fallbacks"),
+                              "price": rc_llm.price_of(seen.get("model")), "default": rc_llm.DEFAULT_MODEL,
+                              "choices": [c[0] for c in rc_llm.MODEL_CHOICES]}))
+'''
+
+
+def t_model(check):
+    """使うモデルは ROUGHCUT_MODEL で決まる（画面の「モデル」が設定する）。決めなければ標準のモデル"""
+    res = {}
+    for name, value in (("default", None), ("empty", ""), ("sonnet", "claude-sonnet-5-5"), ("haiku", "claude-haiku-5-5"),
+                        ("fable", "claude-fable-5-2")):
+        env = dict(os.environ, PYTHONIOENCODING="utf-8")
+        env.pop("ROUGHCUT_MODEL", None)
+        env.pop("ROUGHCUT_REQUEST", None)
+        if value is not None:
+            env["ROUGHCUT_MODEL"] = value
+        p = subprocess.run([PY, "-c", f"ROOT = {str(ROOT)!r}\n" + MODEL_CODE], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", env=env, timeout=120)
+        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT ")), "")
+        if not line:
+            check("モデル: 選んだモデルで呼び出す", False, p.stderr[-600:])
+            return
+        res[name] = json.loads(line[7:])
+    d = res["default"]
+    check("モデル: 決めなければ標準のモデル（空でも同じ）", d["model"] == d["default"] == res["empty"]["model"] == "claude-opus-5-5"
+          and d["fallbacks"] == "default", str(d))
+    check("モデル: 選んだモデルで呼び出し、料金もそのモデルで数える",
+          res["sonnet"]["model"] == "claude-sonnet-5-5" and res["sonnet"]["price"] == [2.0, 10.0]
+          and res["fable"]["model"] == "claude-fable-5-2" and res["fable"]["price"] == [8.0, 40.0]
+          and res["haiku"]["price"] == [0.1, 0.5], str({k: (v["model"], v["price"]) for k, v in res.items()}))
+    check("モデル: Haiku には、断られたときの切り替え（fallbacks）を付けない",
+          res["haiku"]["fallbacks"] is None and res["sonnet"]["fallbacks"] == "default" and res["fable"]["fallbacks"] == "default")
+    check("モデル: 画面で選べるのは、おまかせ・Opus・Sonnet・Haiku・Fable",
+          d["choices"] == ["", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-2"], str(d["choices"]))
+
+
 # ---------------------------------------------------------------- まとめ
 def run_all(check, out: Path, fx: Path):
     (fx / "fixes").mkdir(exist_ok=True)
     t_sync(check)
     t_units(check, fx)
+    t_model(check)
     if not (out / "session.json").exists():
         check("修正のテスト（荒編集の結果が必要）", False, "先に荒編集が成功している必要があります")
         return
