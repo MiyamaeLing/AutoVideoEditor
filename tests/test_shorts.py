@@ -11,6 +11,8 @@
   - 1080x1920 で書き出し、shorts.json に #shorts 付きの説明文
   - claude.ai に貼るプロンプトの作成
   - 画面（GUI）に「ショートを作る」ボタンと一覧
+  - 素材全体を1本のショートに（shorts.py --whole）: 1080x1920・全体の長さ・BGM・タイトル（AI／タイトル案）・
+    本編から切り出したショートは消さない。画面の「作るもの」と「全体を1本のショートに」
 """
 from __future__ import annotations
 
@@ -333,6 +335,69 @@ def t_cli(check, out: Path, fx: Path):
           and len(list((sd / "shorts").glob("short_*.mp4"))) == 1, "" if p.returncode == 0 else _tail(p))
 
 
+# ---------------------------------------------------------------- 素材全体を1本に
+def t_whole(check, out: Path, fx: Path):
+    """shorts.py --whole: カット後の素材全体を1本の縦型ショートに（ショートだけ作りたいとき）"""
+    import rc_llm
+    import rc_shorts
+    from rc_template import Template
+    sd = fx / "shorts_cli"
+    if not (sd / "session.json").exists():
+        check("ショート（全体を1本に）: 荒編集の結果が必要", False, "先に荒編集が成功している必要があります")
+        return
+    tpl_dir = fx / "tpl"
+    pj = rc_shorts.load_project(sd)
+    cut_before = sorted(f.name for f in (sd / "shorts").glob("short_*.mp4"))
+    p = _run(["shorts.py", str(sd), "--template", str(tpl_dir), "--whole", "--llm", "none"])
+    video, thumb, info_path = rc_shorts.whole_names(sd)
+    ok = p.returncode == 0 and video.exists() and info_path.exists()
+    check("ショート（全体を1本に）: shorts.py --whole で作れる", ok, "" if ok else _tail(p))
+    if not ok:
+        return
+    pr = _probe(video)
+    info = json.loads(info_path.read_text(encoding="utf-8"))
+    check("ショート（全体を1本に）: 1080x1920 で、カット後の全体の長さ",
+          pr["w"] == 1080 and pr["h"] == 1920 and abs(pr["dur"] - pj.tl.duration) < 0.5, f"{pr} / {pj.tl.duration:.1f}")
+    check("ショート（全体を1本に）: 情報（タイトル・#shorts・一覧用の画像）を残し、切り出したショートは消さない",
+          info["by"] == "whole" and info["title"] and "#shorts" in info["description"] and thumb.exists()
+          and video.name.endswith("_ショート.mp4") and not info["over_limit"]
+          and sorted(f.name for f in (sd / "shorts").glob("short_*.mp4")) == cut_before, str(info.get("title")))
+    tpl = Template(tpl_dir)
+    want_bgm = bool(rc_shorts.whole_bgm(pj, tpl, pj.tl.duration))
+    has_plan_bgm = bool(pj.plan.get("bgm")) and any(tpl.bgm_files().values())
+    check("ショート（全体を1本に）: 演出プランのBGMを重ねる（プランか曲が無ければ付けない）",
+          info["bgm"] == want_bgm == has_plan_bgm and not rc_shorts.whole_bgm(
+              rc_shorts.Project(pj.out, pj.sess, pj.chunks, pj.decisions, {}, pj.meta, pj.src, pj.tl, pj.items),
+              tpl, pj.tl.duration), f"{info['bgm']} {want_bgm} {has_plan_bgm}")
+    # タイトルなど: AI（偽の通信）／使えなければ荒編集のタイトル案から
+    answer = {"title": "30秒で分かる\\nドリル", "description": "ドリルを試しました。", "hashtags": ["#ドリル", "工具"],
+              "hook": "いきなり穴あけ"}
+    calls: list = []
+    orig = rc_llm._client
+    rc_llm._client = fake_claude(answer, calls)
+    try:
+        pick, _u = rc_shorts.whole_pick(pj, "api", "low")
+    finally:
+        rc_llm._client = orig
+    fmt = ((calls[0] if calls else {}).get("output_config") or {}).get("format") or {}
+    check("ショート（全体を1本に）: タイトル・説明文・タグをAIが決める（区間は全体）",
+          pick.title == "30秒で分かるドリル" and pick.hashtags == ["ドリル", "工具"] and pick.a == 0.0
+          and abs(pick.b - pj.tl.duration) < 0.01 and fmt.get("schema", {}).get("required") == rc_shorts.WHOLE_SCHEMA["required"],
+          f"{pick.title} {pick.hashtags}")
+
+    def broken():
+        raise SystemExit("APIキーがありません")
+    rc_llm._client = broken
+    try:
+        pick2, _u = rc_shorts.whole_pick(pj, "api", "low")
+    finally:
+        rc_llm._client = orig
+    pick3, _u = rc_shorts.whole_pick(pj, "none", "low")
+    check("ショート（全体を1本に）: AIが使えないとき・使わないときは、荒編集のタイトル案から",
+          pick2.title and pick2.title == pick3.title and len(pick3.title) <= 20 and pick3.by == "whole", pick3.title)
+    check("ショート（全体を1本に）: 3分を超えたら知らせる（上限は180秒）", rc_shorts.WHOLE_LIMIT == 180.0)
+
+
 # ---------------------------------------------------------------- 画面
 GUI_CODE = r'''
 import json, os, sys
@@ -363,6 +428,28 @@ w.create.llm.setCurrentIndex(w.create.llm.findData("none"))
 ext.count.setValue(2)
 ext.make()
 res["call"] = calls[-1] if calls else None
+# 素材全体を1本のショートに
+res["whole_btn"] = ext.whole.isEnabled()
+ext.make_whole()
+res["whole_call"] = calls[-1] if calls else None
+plans = []
+real_plan = w.review.make_plan
+w.review.make_plan = lambda then=None: plans.append(then)
+for n in ("plan_edited.json", "plan_used.json"):
+    if (Path(OUT) / n).exists():
+        (Path(OUT) / n).rename(Path(OUT) / (n + ".bak"))
+n_calls = len(calls)
+ext.make_whole(plan=True)
+res["plan_first"] = len(plans) == 1 and len(calls) == n_calls
+for n in ("plan_edited.json", "plan_used.json"):
+    if (Path(OUT) / (n + ".bak")).exists():
+        (Path(OUT) / (n + ".bak")).rename(Path(OUT) / n)
+w.review.make_plan = real_plan
+res["target_default"] = w.create.target.currentData()
+before = w.create.btn_full.text()
+w.create.target.setCurrentIndex(w.create.target.findData("short"))
+res["target_text"] = [before, w.create.btn_full.text()]
+w.create.target.setCurrentIndex(w.create.target.findData("video"))
 w.runner.start = real
 # 処理中はボタンを押せない
 w.runner.proc = object()
@@ -409,6 +496,13 @@ def t_gui(check, proj: Path, fx: Path):
     check("ショート: ボタンで shorts.py を実行", call[0] == "shorts.py" and str(proj) in call[1]
           and call[1][call[1].index("--count") + 1] == "2" and "none" in call[1], str(call))
     check("ショート: 処理中はボタンを押せない", r["busy_disabled"])
+    wc = r["whole_call"] or ["", []]
+    check("ショート（全体を1本に）: ボタンで shorts.py --whole を実行", r["whole_btn"] and wc[0] == "shorts.py"
+          and "--whole" in wc[1] and "--count" not in wc[1], str(wc))
+    check("ショート（全体を1本に）: 一気に作るときは、演出プランが無ければ先に作る", r["plan_first"])
+    check("ショート（全体を1本に）: 「作成」タブの「作るもの」で切り替える（初めは横長の動画）",
+          r["target_default"] == "video" and r["target_text"][0] != r["target_text"][1] and "ショート" in r["target_text"][1],
+          str(r["target_text"]))
     check("ショート: 一覧に再生ボタンとフォルダ", r["plays"] == 2 and r["folder"], str(r["plays"]))
 
 
@@ -424,6 +518,7 @@ def run_all(check, out: Path, fx: Path):
     t_units(check, proj, tpl_dir)
     t_ai_render(check, proj, tpl_dir)
     t_cli(check, out, fx)
+    t_whole(check, out, fx)
     t_gui(check, proj, fx)
 
 

@@ -534,6 +534,15 @@ class CreatePage(QWidget):
         # 設定
         g_opt = QGroupBox("3. 設定")
         form = QFormLayout(g_opt)
+        # 作るもの: 横長の動画（いつもの流れ）か、素材全体を1本の縦型ショートにするか
+        self.target = QComboBox()
+        self.target.addItem("横長の動画（通常）", "video")
+        self.target.addItem("ショート（縦型 1080x1920・素材全体を1本に）", "short")
+        self.target.setCurrentIndex(max(0, self.target.findData(st.value("target", "video"))))
+        self.target.setToolTip("ショートを選ぶと、「完成まで一気に作る」で、カットした素材全体を1本の縦型ショートに仕上げます"
+                               "（横長の完成動画は作りません）。\n荒編集までは同じなので、あとから「確認・仕上げ」タブでどちらも作れます。")
+        self.target.currentIndexChanged.connect(self._target_changed)
+        form.addRow("作るもの", self.target)
         self.llm = QComboBox()
         for k, v in LLMS:
             self.llm.addItem(v, LLM_DATA.get(k, k))
@@ -636,6 +645,7 @@ class CreatePage(QWidget):
             b.setStyleSheet("font-size: 15px; font-weight: bold;")
         self.btn_full.setStyleSheet("QPushButton { font-size: 15px; font-weight: bold; background: #2B6CB0; color: white; }"
                                     + DISABLED_CSS)
+        self._target_changed()
         self.btn_rough.clicked.connect(lambda: self.start(full=False))
         self.btn_full.clicked.connect(lambda: self.start(full=True))
         br = QHBoxLayout()
@@ -768,9 +778,16 @@ class CreatePage(QWidget):
     def mode(self) -> str:
         return self.mode_group.checkedButton().property("key")
 
+    def _target_changed(self):
+        short = self.target.currentData() == "short"
+        self.btn_full.setText("ショートを完成まで一気に作る" if short else "完成まで一気に作る")
+        self.btn_full.setToolTip("荒編集 → 演出プラン → 縦型ショート（素材全体を1本に）の書き出しまで、止まらずに進めます" if short
+                                 else "荒編集 → 演出プラン → 完成動画の書き出しまで、止まらずに進めます")
+
     def save_settings(self):
         st = self.win.settings
         st.setValue("mode", self.mode())
+        st.setValue("target", self.target.currentData())
         st.setValue("llm", self.llm.currentData())
         st.setValue("llm_choice", self.llm_choice())
         st.setValue("ai_request", self.request.toPlainText())
@@ -2283,7 +2300,11 @@ class MainWindow(QMainWindow):
             self.review.load(out)
             self.tabs.setCurrentWidget(self.review)
             if then_finish:
-                self.review.make_plan_and_render()
+                ext = getattr(self, "shorts_ext", None)
+                if self.create.target.currentData() == "short" and ext:
+                    ext.make_whole(plan=True)   # 演出プラン → 素材全体を1本の縦型ショートに
+                else:
+                    self.review.make_plan_and_render()
 
         self.runner.start("roughcut.py", full, "荒編集を実行中", done)
 

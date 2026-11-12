@@ -39,6 +39,9 @@ def main():
     ap.add_argument("--count", type=int, choices=[1, 2, 3], help="作る本数の上限（初期値: テンプレートの count、ふつうは3）")
     ap.add_argument("--effort", choices=["low", "medium", "high"], default="medium")
     ap.add_argument("--keep-work", action="store_true", help="中間ファイルを消さずに残す")
+    ap.add_argument("--whole", action="store_true",
+                    help="区間を選ばず、カット後の素材全体を1本の縦型ショートにする（ショートだけ作りたいとき。"
+                         "できるもの: ○○_ショート.mp4 と short_whole.json）")
     args = ap.parse_args()
     require_ffmpeg()
     try:
@@ -48,6 +51,9 @@ def main():
     if not (args.out_dir / "session.json").exists():
         sys.exit(f"[エラー] {args.out_dir / 'session.json'} がありません。先に荒編集を実行してください。")
     import rc_shorts
+    if args.whole:
+        rc_shorts.generate_whole(args.out_dir, Template(args.template), args.llm, args.effort, args.keep_work)
+        return
     rc_shorts.generate(args.out_dir, Template(args.template), args.llm, args.effort, args.count, args.picks,
                        args.keep_work)
 

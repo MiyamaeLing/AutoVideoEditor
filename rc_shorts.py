@@ -707,7 +707,8 @@ def telops_in(pj: Project, a: float, b: float) -> list[tuple[float, float, str, 
 
 
 def render_short(pj: Project, pick: Pick, tpl: Template, cfg: dict, out_path: Path, work: Path,
-                 inter_args: list[str], final_args: list[str]) -> dict:
+                 inter_args: list[str], final_args: list[str], bgm_sections=None) -> dict:
+    """bgm_sections: [(開始, 終了, ファイル)]（ショートの中の時刻）。あれば、声に合わせて下げながら重ねる"""
     fps = pj.tl.fps
     segs, cuts = range_segments(pj.tl, pick.a, pick.b)
     if not segs:
@@ -752,9 +753,14 @@ def render_short(pj: Project, pick: Pick, tpl: Template, cfg: dict, out_path: Pa
         shutil.copytree(fonts, work / "fonts")
     vf = vparts[0] + ",ass=subs.ass" + (":fontsdir=fonts" if fonts else "") + "[v]"
     target = (tpl.get("audio", {}) or {}).get("loudness", -14.0)
-    af = f"[0:a]loudnorm=I={target}:TP=-1.5:LRA=11,aresample={rc_render.SR}[a]"
+    ain, extra = "0:a", []
+    if bgm_sections:
+        print("    BGMを重ねています", flush=True)
+        rc_render.mix_audio(body.resolve(), dur, bgm_sections, [], tpl, work)
+        ain, extra = "1:a", ["-i", "mix.wav"]
+    af = f"[{ain}]loudnorm=I={target}:TP=-1.5:LRA=11,aresample={rc_render.SR}[a]"
     out_path = Path(out_path).resolve()
-    cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(body.resolve()), "-filter_complex", f"{vf};{af}",
+    cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(body.resolve()), *extra, "-filter_complex", f"{vf};{af}",
            "-map", "[v]", "-map", "[a]", *final_args, "-r", str(fps), "-c:a", "aac", "-b:a", "192k",
            "-movflags", "+faststart", str(out_path)]
     print("    最終書き出し（切り抜き・字幕・タイトル帯）", flush=True)
@@ -777,6 +783,137 @@ def description_text(p: Pick, cfg: dict) -> str:
     tags.sort(key=lambda t: t.lower() != "shorts")
     body = p.description.strip()
     return (body + "\n\n" if body else "") + " ".join(f"#{t}" for t in tags[:5])
+
+
+# ============================================================
+#  素材全体を1本のショートに（ショート単体で作る）
+# ============================================================
+WHOLE_LIMIT = 180.0   # YouTube がショートとして扱う長さの上限（秒）
+WHOLE_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "required": ["title", "description", "hashtags", "hook"],
+    "properties": {
+        "title": {"type": "string", "description": "ショートのタイトル。画面上部の帯にも出る。20字以内"},
+        "description": {"type": "string", "description": "説明文（2〜3行。ハッシュタグは含めない）"},
+        "hashtags": {"type": "array", "items": {"type": "string"}, "description": "#を付けないタグ 2〜4個"},
+        "hook": {"type": "string", "description": "冒頭のつかみ（最初の数秒で何が興味を引くか）"},
+    },
+}
+
+
+def whole_names(out_dir: Path) -> tuple[Path, Path, Path]:
+    """素材全体のショートの (動画, 一覧用の画像, 情報のJSON)"""
+    out_dir = Path(out_dir)
+    stem = (_read(out_dir / "session.json", {}) or {}).get("stem") or "short"
+    return out_dir / f"{stem}_ショート.mp4", out_dir / f"{stem}_ショート.jpg", out_dir / "short_whole.json"
+
+
+def _whole_instructions(mode: str) -> str:
+    import rc_llm
+    return f"""あなたはYouTubeショート（縦型の短い動画）の編集者です。カット済みの動画の文字起こしを読んで、この動画を1本のショートとして公開するときのタイトルなどを決めてください。
+動画のジャンル: {rc_llm.MODE_HINT.get(mode, '')}
+
+- title: 20字以内。画面上部の帯にも出る。思わず見たくなる短い言葉
+- description: 説明文2〜3行（ハッシュタグは入れない。#shorts は自動で付きます）
+- hashtags: # を付けないタグを2〜4個
+- hook: 冒頭のつかみ（最初の数秒で何が興味を引くか）
+
+出力はJSONのみです。"""
+
+
+def _flat(text) -> str:
+    return str(text).replace(chr(92) + "n", "").replace(chr(10), "").strip()
+
+
+def whole_pick(pj: Project, llm: str, effort: str) -> tuple[Pick, dict | None]:
+    """素材全体（カット後）を1本にする Pick。タイトルなどは、AI（api）か、荒編集で作ったタイトル案・タグから"""
+    p = Pick(pj.items[0][0], pj.items[-1][0], "", by="whole", a=0.0, b=pj.tl.duration)
+    usage = None
+    if llm == "api":
+        try:
+            import rc_llm
+            anthropic, client = rc_llm._client()
+            usage = {"in": 0, "out": 0}
+            print("  Claudeでタイトル・説明文を考えています…", flush=True)
+            res = rc_llm._call(client, anthropic, _whole_instructions(pj.sess.get("mode", "talk")), ai_lines(pj),
+                               WHOLE_SCHEMA, effort, usage)
+            p.title = _flat(res.get("title") or "")[:30]
+            p.description = str(res.get("description") or "").strip()
+            p.hashtags = [str(t).lstrip("#＃").strip() for t in res.get("hashtags") or [] if str(t).strip()]
+            p.hook = str(res.get("hook") or "")
+            p.reason = "素材全体を1本に（タイトルなどはAI）"
+        except (Exception, SystemExit) as e:  # noqa: BLE001  AIが使えなくても（APIキーなしも）、タイトル案から作って続ける
+            print(f"  [注意] AIでタイトルを作れなかったので、タイトル案から作ります: {e}")
+    if not p.title:
+        texts = pj.meta.get("thumbnail_texts") or []
+        p.title = (_flat(texts[0]) if texts else "")[:20] or _title_from(pj, "")
+        p.description = _auto_description(pj, p)
+        p.hashtags = [str(t).lstrip("#＃").strip() for t in (pj.meta.get("tags") or [])[:3] if str(t).strip()]
+        p.reason = "素材全体を1本に"
+    return p, usage
+
+
+def whole_bgm(pj: Project, tpl: Template, dur: float) -> list[tuple[float, float, Path]]:
+    """演出プランのBGMの区間（finish.py と同じ決め方）。プランやBGMの曲が無ければ空"""
+    import itertools
+    span = {i: s for i, s, _e, _t in pj.items}
+    cyc = {m: itertools.cycle(fs) for m, fs in tpl.bgm_files().items() if fs}
+    starts = [(span[b["start_id"]], b.get("mood")) for b in pj.plan.get("bgm", []) or [] if b.get("start_id") in span]
+    if starts:
+        starts[0] = (0.0, starts[0][1])
+    out = []
+    for (s, mood), nxt in zip(starts, starts[1:] + [(dur, None)]):
+        e = min(nxt[0], dur)
+        if mood in cyc and e - s > 1:
+            out.append((s, e, next(cyc[mood])))
+    return out
+
+
+def generate_whole(out_dir: Path, tpl: Template, llm: str = "api", effort: str = "medium",
+                   keep_work: bool = False) -> Path:
+    """カット後の素材全体を、1本の縦型ショートにする（本編を作らずに、ショートだけ作りたいとき）"""
+    t0 = time.time()
+    cfg = cfg_of(tpl)
+    pj = load_project(out_dir)
+    print("■ 素材全体を1本のショートにします")
+    if not pj.items:
+        sys.exit("[エラー] 発言が見つからないので、ショートを作れません。")
+    dur = pj.tl.duration
+    print(f"  長さ: {fmt_ts(dur)}")
+    over = dur > WHOLE_LIMIT
+    if over:
+        print(f"  [注意] {WHOLE_LIMIT / 60:.0f}分を超えています。YouTube ではショートとして扱われません"
+              "（カットを増やすか、「ショートを作る」で短い区間を切り出してください）。このまま作ります。")
+    if llm == "manual":
+        print("  [お知らせ] タイトル・説明文は、荒編集のタイトル案から作ります（claude.ai への貼り付けはありません）。")
+    pick, usage = whole_pick(pj, llm, effort)
+    print(f"  タイトル「{pick.title}」")
+    video, thumb, info_path = whole_names(pj.out)
+    bgm = whole_bgm(pj, tpl, dur)
+    final_args, inter_args, enc = rc_render.pick_encoder((tpl.get("video", {}) or {}).get("encoder", "auto"),
+                                                         int((tpl.get("video", {}) or {}).get("quality", 19)))
+    print(f"■ ショートを書き出しています（{enc}{'・BGMあり' if bgm else ''}）")
+    work = pj.out / "shorts" / "_work_whole"
+    if work.exists():
+        shutil.rmtree(work, ignore_errors=True)
+    r = render_short(pj, pick, tpl, cfg, video, work, inter_args, final_args, bgm)
+    if not keep_work:
+        shutil.rmtree(work, ignore_errors=True)
+    make_thumb(video, thumb, min(1.0, r["duration"] / 2))
+    info = {"no": 1, "file": video.name, "thumb": thumb.name, "title": pick.title,
+            "description": description_text(pick, cfg), "hashtags": pick.hashtags, "hook": pick.hook,
+            "reason": pick.reason, "start": 0.0, "end": round(dur, 2), "duration": r["duration"],
+            "start_id": pick.start_id, "end_id": pick.end_id, "by": "whole", "follow": r["follow"],
+            "bgm": bool(bgm), "over_limit": over, "layout": cfg.get("layout", "crop")}
+    info_path.write_text(json.dumps(info, ensure_ascii=False, indent=1), encoding="utf-8")
+    print("■ ショート完成")
+    print(f"  {video}")
+    print(f"  タイトル・説明文: {info_path}")
+    print(f"  所要時間: {fmt_ts(time.time() - t0)}")
+    if usage and usage.get("in"):
+        import rc_llm
+        print(f"  Claude API: {rc_llm.cost_text(usage)}")
+    return video
 
 
 # ============================================================
