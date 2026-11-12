@@ -98,6 +98,7 @@ bold = true
 color = "#FFFFFF"
 box_color = "#1A1A1A"
 duration = 2.5
+position = "top"          # top（画面の上。写っている物を隠さない）/ top-left / top-right / middle（真ん中）
 
 # ---- ズーム（喋りの強調でグッと寄る） ----
 [zoom]
@@ -300,26 +301,28 @@ animation = "pop"
 [telop.spec]              # 商品スペックのカード  例: 「マキタ DF033D／重さ：1.2kg／価格：9,800円」
 size = 44
 head_size = 50            # 見出しの文字の大きさ
-color = "#FFFFFF"
-label_color = "#9FD3FF"   # 「重さ」などの項目名の色
+color = "#1A1A1A"
+label_color = "#2B6CB0"   # 「重さ」などの項目名の色
 head_color = "#FFFFFF"
 head_fill = "#2B6CB0"     # 見出しの帯の色
-fill = "#101820"          # カードの色
-opacity = 0.88            # カードの濃さ（1 = 透けない）
+fill = "#FFFFFF"          # カードの色（白地に濃い字）
+line_color = "#1A1A1A"    # 行の区切りの線の色
+opacity = 0.96            # カードの濃さ（1 = 透けない）
 position = "right"
 animation = "slide"
 
 [telop.compare]           # 比較表  例: 「｜A社｜B社／重さ｜1.2kg｜1.5kg／価格｜1万円｜8千円」
 size = 44
 head_size = 46
-color = "#FFFFFF"
-label_color = "#FFE14D"   # 左の列（項目名）の色
+color = "#1A1A1A"
+label_color = "#2B6CB0"   # 左の列（項目名）の色
 head_color = "#FFFFFF"
 head_fill = "#2B6CB0"
-fill = "#101820"
-stripe = "#22303F"        # 1行おきの色
-opacity = 0.9
-position = "middle"
+fill = "#FFFFFF"          # 表の色（白地に濃い字）
+stripe = "#EAF1F8"        # 1行おきの色
+line_color = "#1A1A1A"    # 列の区切りの線の色
+opacity = 0.96
+position = "top"
 animation = "pop"
 
 [telop.step]              # 工作の「STEP 1」カード  例: 「STEP 2 穴をあける」（番号なしなら順に数えます）

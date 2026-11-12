@@ -64,9 +64,9 @@ def t_units(check):
           sp == [["年2回の", "受注生産のみ"], ["正式名", "アフリカンパドーク"], ["7,700円→", "今は9,900円"], ["短い"]], str(sp))
     cap, c = tpl["caption"], tpl["telop"]["emphasis"]
     places = {p: rc_ass.telop_place(p, 1920, 1080, c, cap) for p in D.POSITIONS}
-    check("テロップ: 置く場所は8か所（左右は端に寄せ、下は字幕の上）",
+    check("テロップ: 置く場所は7か所（左右は端に寄せ、下は字幕の上。真ん中はAIには選ばせない）",
           places["top"][:2] == (8, 960) and places["top-left"][0] == 7 and places["top-right"][:2] == (9, 1850)
-          and places["left"][0] == 4 and places["right"][0] == 6 and places["center"][0] == 5
+          and places["left"][0] == 4 and places["right"][0] == 6 and "center" not in D.POSITIONS and "middle" not in D.CARD_POSITIONS
           and places["bottom-left"][0] == 1 and places["bottom-right"][0] == 3
           and 700 < places["bottom-left"][2] < 1080 - cap["margin_bottom"] - cap["size"] * 2, str(places))
 
@@ -112,6 +112,55 @@ def t_units(check):
     box = [e for e in rc_graphics.card_events(tpl, 1920, 1080, [(1, 4, "なにこれ！？", "bubble", {"position": "left"})])]
     box0 = [e for e in rc_graphics.card_events(tpl, 1920, 1080, [(1, 4, "なにこれ！？", "bubble")])]
     check("カード型: 決めた場所に置く（決めていなければテンプレートの場所）", box and box0 and box != box0)
+
+
+def t_feedback(check):
+    """実際の動画を見て直した所: 帯の重なり・言葉の途中で切れる字幕・出すタイミング・表の長さと色・章カードの位置"""
+    import rc_export
+    import rc_graphics
+    import rc_ass
+    import rc_direct as D
+    from rc_template import Template
+    tpl = Template(ROOT / "templates" / "default")
+    o = {"position": "top", "emphasis": "紅紫檀", "size": "normal", "animation": "slide"}
+    ass = rc_ass.build_ass(tpl, 1920, 1080, [], [(1.0, 4.0, "野原工芸 紅紫檀シャーペン", "info", o)], [(10.0, "付属品")])
+    box = [x for x in ass.splitlines() if x.startswith("Dialogue") and ",T_info," in x]
+    txt = [x for x in ass.splitlines() if x.startswith("Dialogue") and ",TX_info," in x]
+    check("帯つきテロップ: 帯は1枚だけ（強調する言葉があっても、途中で色や大きさを変えない）",
+          len(box) == 1 and len(txt) == 1 and box[0].count("{") == 1 and "\\1a&HFF&" in box[0]
+          and "\\1c" in txt[0].split("}", 1)[1] and "Style: TX_info," in ass, str(box)[:200])
+    st = next(x for x in ass.splitlines() if x.startswith("Style: Chapter,")).split(",")
+    check("章カード: 画面の上に出る（真ん中に出して物を隠さない）", st[18] == "8" and int(st[21]) > 0, str(st))
+    items = [(0.0, 2.0, "長野県の南木曽町っていう結構田舎な町にある工"), (2.3, 3.5, "房となっています。"),
+             (3.8, 5.0, "それと木"), (5.2, 6.0, "材のブロック"), (6.2, 7.0, "総合点は8"), (7.2, 8.0, "点とさせていただきました"),
+             (8.2, 9.0, "金属も結構目立つデザ"), (9.2, 10.0, "インとなっています"), (10.2, 11.0, "続いて総評です"),
+             (11.2, 12.0, "こちらは星4です"), (20.0, 21.0, "長時間書きたいとか早"), (21.2, 22.0, "く書きたい")]
+    m = [t for _s, _e, t in rc_export.mend_items(items)]
+    check("字幕: 文字起こしが言葉の途中で区切った所を、言葉がつながるように直す",
+          m[1].startswith("工房と") and m[0].endswith("町にある") and m[3] == "木材のブロック" and m[5].startswith("8点")
+          and m[7].startswith("デザイン") and m[8:10] == ["続いて総評です", "こちらは星4です"] and m[11] == "早く書きたい",
+          str(m))
+    check("字幕: 直しは2度かけても変わらない・数は変えない・間が空いた発言はつながない",
+          rc_export.mend_items(rc_export.mend_items(items)) == rc_export.mend_items(items) and len(m) == len(items)
+          and rc_export.mend_items([(0, 1, "それと木"), (9, 10, "材のブロック")])[0][2] == "それと木", str(m))
+    caps = [t for _s, _e, t in rc_export.build_captions(items, 24)]
+    sp = rc_export.split_caption("すべてのペンの平均をとったらおそらく10ミリぐらいの太さなんじゃないかなと思います", 24)
+    check("字幕: 数字と単位の間（10｜ミリ）では切らない", not any(p[-1].isdigit() for p in sp[:-1]) and "工房となっています" in caps,
+          str(sp))
+    said = [(10.0, 20.0, "そして他にいいところとしてはこのペンがかなり頑丈で剛性が高いので"), (20.5, 22.0, "精度が高いです")]
+    t = D.cue("剛性が高く精度◎", said)
+    check("タイミング: テロップは、その言葉を言う所で出す（発言の頭では出さない）。見つからなければ発言の頭",
+          16.0 < t < 19.5 and D.cue("ここ注意", said) == 10.0 and D.cue("精度◎", said) > 20.0, str(t))
+    lo, hi = D.show_seconds("｜重さ／このペン｜30g／ドクターグリップ｜20g／スマッシュ｜13g", "compare")
+    check("表: 読めるように長く出す（行の数に合わせる。ふつうのテロップより長い）",
+          lo >= 8 and hi >= 16 and D.show_seconds("重さ30g", "emphasis")[1] <= 6, f"{lo} {hi}")
+    cs, cc = rc_graphics.card_config(tpl, "spec"), rc_graphics.card_config(tpl, "compare")
+    check("表: 白地に濃い字", cs["fill"].upper() == "#FFFFFF" == cc["fill"].upper() and cs["color"].upper() == "#1A1A1A"
+          and rc_graphics.CARD_DEFAULTS["compare"]["fill"] == "#FFFFFF" and cc["position"] != "middle", str(cc))
+    import rc_chapters
+    lines, ids = rc_chapters.build_lines([(0.0, 3.0, "黒柿とかもあった気がします"), (5.5, 6.0, "で、"), (6.2, 9.0, "付属品は")],
+                                         [39, 40, 41])
+    check("章: 話の間が空いた所で行を変える（前の話題の最後の一言から章が始まらない）", ids == [39, 40] and len(lines) == 2, str(ids))
 
 
 def t_segments(check, out: Path):
@@ -243,6 +292,7 @@ def t_render(check, out: Path, fx: Path):
 # ---------------------------------------------------------------- まとめ
 def run_all(check, out: Path, fx: Path):
     t_units(check)
+    t_feedback(check)
     if not (out / "session.json").exists():
         check("演出のディレクター（荒編集の結果が必要）", False, "先に tests/smoke_test.py を実行してください")
         return

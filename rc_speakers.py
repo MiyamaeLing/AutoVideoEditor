@@ -510,8 +510,10 @@ def decorate_captions(out: Path, tpl, items, max_chars: int, off: float, inside)
     data = load(out)
     if not data or not data.get("enabled", True):
         return None
-    from rc_export import build_captions
+    from rc_export import build_captions, mend_items
     lab = labels_of(data)
+    fixed = mend_items([(s, e, t) for _, s, e, t in items])   # 言葉の途中で区切られた所をつなぎ直す
+    items = [(i, *m) for (i, *_x), m in zip(items, fixed)]
     caps = build_captions([(s, e, t) for _, s, e, t in items], max_chars)
     ids = caption_ids([t for *_x, t in items], [i for i, *_x in items], max_chars)
     if len(ids) != len(caps):
@@ -533,7 +535,7 @@ def decorate_captions(out: Path, tpl, items, max_chars: int, off: float, inside)
 
 def rewrite_premiere_srt(out: Path, tpl=None) -> Path:
     """今の荒編集（session.json）のまま、Premiere 用の字幕（○○_字幕.srt）だけを書き直す"""
-    from rc_export import build_captions, write_srt
+    from rc_export import build_captions, mend_items, write_srt
     from rc_media import SourceSet, probe
     from rc_timeline import Timeline
     out = Path(out)
@@ -552,6 +554,7 @@ def rewrite_premiere_srt(out: Path, tpl=None) -> Path:
             items.append((s, e, text))
             item_ids.append(c.id)
     max_chars = int(sess.get("args", {}).get("caption_chars", 24))
+    items = mend_items(items)
     caps = build_captions(items, max_chars)
     caps = label_srt(out, items, item_ids, max_chars, caps, tpl, chunks)
     p = out / f"{sess['stem']}_字幕.srt"

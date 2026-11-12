@@ -38,7 +38,7 @@ import rc_render
 import rc_enhance
 import rc_speedup
 from rc_ass import build_ass
-from rc_export import build_captions, write_srt
+from rc_export import build_captions, mend_items, write_srt
 from rc_media import SourceSet, probe, require_ffmpeg, snap_fps
 from rc_template import Template
 from rc_timeline import Timeline
@@ -257,13 +257,24 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
 
     # ---- 字幕・テロップ・章カード ----
     max_chars = tpl["caption"].get("max_chars", 24)
-    caps = [(s + off, e + off, t) for s, e, t in build_captions([(s, e, t) for _, s, e, t in items], max_chars)
+    # 文字起こしが言葉の途中で区切った所（「…にある工」「房と…」）は、言葉がつながるように直してから字幕にする
+    cap_items = [(i, *m) for (i, *_x), m in zip(items, mend_items([(s, e, t) for _, s, e, t in items]))]
+    caps = [(s + off, e + off, t) for s, e, t in build_captions([(s, e, t) for _, s, e, t in cap_items], max_chars)
             if inside(s)]
     telops, se_events = [], []
-    for t in plan["telops"]:
-        s = span[t["start_id"]][0]
-        e = max(span[t["end_id"]][1], s + 1.8)
-        e = min(e, s + 6.0)
+    order = [i for i, *_x in items]
+    said = {i: (s, e, t) for i, s, e, t in items}
+    plan_telops = sorted(plan["telops"], key=lambda t: span[t["start_id"]][0])
+    for n, t in enumerate(plan_telops):
+        # その言葉を言う所で出す（発言の頭で出すと、まだ言っていない結論が先に見えてしまう）
+        k0, k1 = order.index(t["start_id"]), order.index(t["end_id"])
+        s = rc_direct.cue(t["text"], [said[i] for i in order[k0:k1 + 1]])
+        lo, hi = rc_direct.show_seconds(t["text"], t["style"])
+        e = min(max(span[t["end_id"]][1] + 0.4, s + lo), s + hi)
+        if n + 1 < len(plan_telops):   # 長く出すぶんが、次のテロップにかぶらないようにする
+            nxt = span[plan_telops[n + 1]["start_id"]][0]
+            if nxt - 0.2 > s + 1.8:
+                e = min(e, max(nxt - 0.2, min(span[t["end_id"]][1], s + hi)))
         if not inside(s):
             continue
         se = tpl.se_file(t["se"]) if t.get("se", "none") != "none" else None
@@ -310,7 +321,7 @@ def run(out_dir: Path, template: Path = DEFAULT_TEMPLATE, llm: str = "api", plan
                                                             [(f.path, 0.0, f.duration) for f in src.files]))
     # 話者の区別（実験的な機能）：speakers.json があれば、字幕を人ごとの色にする
     import rc_speakers
-    caps_ass = rc_speakers.decorate_captions(out_dir, tpl, items, max_chars, off, inside) or caps
+    caps_ass = rc_speakers.decorate_captions(out_dir, tpl, cap_items, max_chars, off, inside) or caps
     progress = ([(c["t"] + off, c["title"]) for c in sess_chapters], off, off + body_dur)   # 章の進み具合
     ass = build_ass(tpl, w, h, caps_ass, telops, chapters, progress, keywords=plan.get("caption_keywords") or ())
     if ftl is not tl:   # 早送り中は画面の隅に「×4」などを出す

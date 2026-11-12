@@ -17,9 +17,10 @@ import subprocess
 from pathlib import Path
 
 # 文字だけのテロップを置ける場所（字幕は画面の下に出るので、bottom-* は字幕のすぐ上）
-POSITIONS = ("top", "top-left", "top-right", "left", "right", "bottom-left", "bottom-right", "center")
+POSITIONS = ("top", "top-left", "top-right", "left", "right", "bottom-left", "bottom-right")
+# 画面の真ん中（center / middle）は、写っている物を隠すことが多いので AI には選ばせない（テンプレートに書けば使える）
 # カード型（吹き出し・スペック表など）を置ける場所
-CARD_POSITIONS = ("right", "left", "top", "middle", "top-left", "top-right")
+CARD_POSITIONS = ("right", "left", "top", "top-left", "top-right")
 ANIMATIONS = ("pop", "slide", "fade", "drop", "zoom", "shake")
 SIZES = {"small": 0.85, "normal": 1.0, "large": 1.22}
 EMPH_SCALE = 1.22      # 強調する言葉の大きさ（まわりの字に対する倍率）
@@ -64,8 +65,9 @@ PROMPT = """あなたはYouTube動画の演出のディレクターです。編�
 ## テロップ（画像の前に「テロップN」と書いてあります）
 - position: 置く場所。**その場面で、写っている大事な物（商品・手元・顔・はかりの表示・画面の中の文字）に重ならない、空いている所**を選ぶ
   - 文字だけのテロップ: top=上の中央 / top-left=左上 / top-right=右上 / left=左の中段 / right=右の中段 /
-    bottom-left=左下（字幕の上）/ bottom-right=右下（字幕の上）/ center=画面の真ん中（オチ・結論を大きく見せたいときだけ。物を隠すなら使わない）
-  - カード型（吹き出し・スペック表・比較表・工程・場所）: right / left / top / middle / top-left / top-right から。物が左にあれば右、のように反対側へ
+    bottom-left=左下（字幕の上）/ bottom-right=右下（字幕の上）。画面の真ん中には置きません（主役の物を隠すため）
+  - カード型（吹き出し・スペック表・比較表・工程・場所）: right / left / top / top-left / top-right から。物が左にあれば右、のように反対側へ
+  - 主役の物（商品・手元）は画面の真ん中に写っていることが多いので、端（左上・右上・左・右）を優先する
   - 大事な物が上にあるのに top、のような置き方はしない。どこも空いていなければ、いちばん隠れてよい所
 - emphasis: テロップの文字の中で、いちばん効く言葉（数字と単位・商品名・意外な言葉。2〜6字）。色と大きさを変えて目立たせます。
   文字にそのまま含まれる言葉にする。文字全部にはしない。目立たせる言葉が無ければ空。カード型は空
@@ -118,6 +120,47 @@ def telop_opts(t: dict, card: bool = False) -> dict:
     anim = str(t.get("animation") or "")
     return {"position": pos, "emphasis": em, "size": size if size in SIZES else "normal",
             "animation": anim if anim in ANIMATIONS else ""}
+
+
+# ---------------------------------------------------------------- 出すタイミングと長さ
+_SEP = re.compile(r"[｜|／/→×・！!？?、。「」（）()：:\s　]+")
+_HIRA = re.compile(r"^[ぁ-ゖー]+$")
+CUE_LEAD = 0.25   # その言葉を言い始める少し前に出す（秒）
+
+
+def cue(text: str, said: list[tuple[float, float, str]]) -> float:
+    """テロップを出す時刻。said = テロップの区間の発言 [(開始, 終了, 文)]。
+
+    テロップの言葉（2字以上。ひらがなだけの言葉は除く）を最初に言う所を探して、その少し前にする。
+    見つからなければ、区間の最初の発言の頭（今までどおり）。
+    """
+    if not said:
+        return 0.0
+    words = [w for w in _SEP.split(str(text or "")) if len(w) >= 2]
+    for s, e, line in said:
+        line = str(line or "")
+        best = None
+        for w in words:
+            for n in range(len(w), 1, -1):       # 長い一致から探す
+                hit = [(line.find(w[k:k + n]), n) for k in range(len(w) - n + 1)
+                       if not _HIRA.match(w[k:k + n]) and w[k:k + n] in line]
+                if hit:
+                    pos = min(hit)[0]
+                    best = pos if best is None else min(best, pos)
+                    break
+        if best is not None and line:
+            return max(said[0][0], s + (e - s) * best / len(line) - CUE_LEAD)
+    return said[0][0]
+
+
+def show_seconds(text: str, style: str) -> tuple[float, float]:
+    """テロップを出しておく長さの（最短, 最長）秒。表は読むのに時間がかかるので、行の数に合わせて長くする"""
+    if style in ("spec", "compare"):
+        rows = max(len([x for x in re.split(r"[／/\n]", str(text or "")) if x.strip()]), 1)
+        return min(4.0 + 1.2 * rows, 12.0), 20.0
+    if style in ("step", "place", "bubble"):
+        return 2.5, 7.0
+    return 1.8 + 0.08 * len(str(text or "")), 6.0
 
 
 def zoom_focus(z: dict) -> tuple[float, float] | None:

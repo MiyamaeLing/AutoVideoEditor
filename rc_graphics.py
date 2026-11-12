@@ -32,11 +32,13 @@ FONT = "BIZ UDPGothic"
 CARD_DEFAULTS = {
     "bubble": {"size": 60, "color": "#1A1A1A", "fill": "#FFFFFF", "border_color": "#1A1A1A", "border": 5,
                "position": "right", "animation": "pop"},
-    "spec": {"size": 44, "head_size": 50, "color": "#FFFFFF", "label_color": "#9FD3FF", "head_color": "#FFFFFF",
-             "head_fill": "#2B6CB0", "fill": "#101820", "opacity": 0.88, "position": "right", "animation": "slide"},
-    "compare": {"size": 44, "head_size": 46, "color": "#FFFFFF", "label_color": "#FFE14D", "head_color": "#FFFFFF",
-                "head_fill": "#2B6CB0", "fill": "#101820", "stripe": "#22303F", "opacity": 0.9,
-                "position": "middle", "animation": "pop"},
+    # 表は白地に濃い字（映像の上でも読みやすい）。line_color = 行・列の区切りの線
+    "spec": {"size": 44, "head_size": 50, "color": "#1A1A1A", "label_color": "#2B6CB0", "head_color": "#FFFFFF",
+             "head_fill": "#2B6CB0", "fill": "#FFFFFF", "line_color": "#1A1A1A", "opacity": 0.96,
+             "position": "right", "animation": "slide"},
+    "compare": {"size": 44, "head_size": 46, "color": "#1A1A1A", "label_color": "#2B6CB0", "head_color": "#FFFFFF",
+                "head_fill": "#2B6CB0", "fill": "#FFFFFF", "stripe": "#EAF1F8", "line_color": "#1A1A1A",
+                "opacity": 0.96, "position": "top", "animation": "pop"},
     "step": {"size": 56, "number_size": 76, "color": "#1A1A1A", "fill": "#FFFFFF", "accent": "#FF7A00",
              "number_color": "#FFFFFF", "position": "top-left", "animation": "slide"},
     "place": {"size": 58, "sub_size": 36, "color": "#FFFFFF", "sub_color": "#CFE8D8", "accent": "#2FA36B",
@@ -361,7 +363,7 @@ def _spec(L: Layer, tpl, c, text, w, h):
     for i, (a, b) in enumerate(rows):
         cy = y + hh + pad * 0.3 + rh * (i + 0.5)
         if i:
-            L.shape(rrect(x + pad * 0.6, cy - rh / 2 - 1, bw - pad * 1.2, 2, 0), "#FFFFFF", 0.18, 1)
+            L.shape(rrect(x + pad * 0.6, cy - rh / 2 - 1, bw - pad * 1.2, 2, 0), c.get("line_color", "#FFFFFF"), 0.18, 1)
         if a:
             L.text(x + pad, cy, 4, a, fs, c["label_color"], font, layer=2)
             L.text(x + bw - pad, cy, 6, b, fs, c["color"], font, layer=2)
@@ -399,7 +401,7 @@ def _compare(L: Layer, tpl, c, text, w, h):
     cx = x
     for j, cw in enumerate(cols[:-1]):
         cx += cw
-        L.shape(rrect(cx - 1, y + rh * 0.18, 2, bh - rh * 0.36, 0), "#FFFFFF", 0.2, 2)
+        L.shape(rrect(cx - 1, y + rh * 0.18, 2, bh - rh * 0.36, 0), c.get("line_color", "#FFFFFF"), 0.2, 2)
     for i, row in enumerate(rows):
         cy = y + rh * (i + 0.5)
         cx = x

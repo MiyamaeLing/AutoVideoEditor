@@ -348,7 +348,7 @@ def render_final(body: Path, mix: Path, loud: dict, ass_name: str, fonts: Path |
         parts.append(f"[1:a]loudnorm=I={target}:TP=-1.5:LRA=11:measured_I={loud['input_i']}:"
                      f"measured_TP={loud['input_tp']}:measured_LRA={loud['input_lra']}:"
                      f"measured_thresh={loud['input_thresh']}:offset={loud['target_offset']}:linear=true,"
-                     f"aresample={SR}[a]")
+                     f"aresample={SR},atrim=end={media_duration(mix):.3f}[a]")   # loudnorm が末尾に足す余白を切る
     else:
         parts.append("[1:a]anull[a]")
     run_progress(cmd + ["-filter_complex", ";".join(parts), "-map", "[v]", "-map", "[a]", *enc_args,

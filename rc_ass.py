@@ -174,6 +174,19 @@ def telop_events(s: float, e: float, text: str, style: str, opts: dict, c: dict,
         return "\\N".join(out)
 
     ev = []
+    if box:
+        # 帯つきのテロップ: 帯は、文字を透明にした1枚（色も大きさも途中で変えない）で描く。
+        # 言葉ごとに色や大きさを変えると、帯がその数だけ描かれて、重なった所が濃くなるため。
+        # 強調する言葉は色だけ変える（大きさを変えると帯からはみ出す）
+        plain = "\\N".join(_esc(ln) for ln in lines)
+        ev.append(f"Dialogue: 1,{_t(s)},{_t(e)},T_{style},,0,0,0,,{{{line_tags}\\1a&HFF&{_seg_anim(anim, base)}}}" + plain)
+        row = []
+        for ln in lines:
+            k = ln.find(em) if em else -1
+            parts = [(ln, False)] if k < 0 else [(ln[:k], False), (em, True), (ln[k + len(em):], False)]
+            row.append("".join("{" + _tag_color(acc if hot else col) + "}" + _esc(seg) for seg, hot in parts if seg))
+        ev.append(f"Dialogue: 2,{_t(s)},{_t(e)},TX_{style},,0,0,0,,{{{line_tags}{_seg_anim(anim, base)}}}" + "\\N".join(row))
+        return ev
     o2 = float(c.get("outline2", 0) or 0)
     if o2 > 0 and not box:   # 二重の縁取り: 太い外側の縁だけを、後ろに描く
         oc = str(c.get("outline2_color", "#FFFFFF"))
@@ -219,7 +232,14 @@ def build_ass(tpl: Template, w: int, h: int, captions, telops, chapters, progres
         # margin_v / margin_h はテンプレートに書いたときだけ使う（書いていなければ今までどおり 70）
         styles.append(_style(f"T_{name}", c, POS.get(c.get("position", "top"), 8), c.get("margin_v", 70),
                              c.get("margin_h", 70), box=box))
-    styles.append(_style("Chapter", chap, 5, 0, box=True))
+        if box:   # 帯の上に重ねる文字だけのスタイル（縁取りなし）
+            styles.append(_style(f"TX_{name}", {**c, "outline": 0, "shadow": 0}, POS.get(c.get("position", "top"), 8),
+                                 c.get("margin_v", 70), c.get("margin_h", 70)))
+    # 章カードは画面の上に出す（真ん中に出すと、写っている物を隠してしまう）。position = "middle" で真ん中
+    chap_pos = str(chap.get("position", "top"))
+    chap_an = {"middle": 5, "center": 5, "top-left": 7, "top-right": 9}.get(chap_pos, 8)
+    styles.append(_style("Chapter", chap, chap_an, 0 if chap_an == 5 else int(chap.get("margin_v", 90)),
+                         int(chap.get("margin_h", 90)), box=True))
     styles.append(rc_graphics.card_style_line(tpl))   # 吹き出し・スペック表などのカード型テロップ用
 
     ev = []

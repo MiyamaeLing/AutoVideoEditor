@@ -219,6 +219,8 @@ def split_caption(text: str, max_chars: int) -> list[str]:
             pen[i] = 4.0   # 文節の分け方では切れ目でないが、文字の種類が変わる所
         if b in _PUNCT and b not in " 　":
             pen[i] = max(pen[i], 50.0)   # 句読点を次の字幕の頭に回さない
+        elif a.isdigit() and (_char_kind(b) in "Ka" or b in _COUNTERS):
+            pen[i] = max(pen[i], 60.0)   # 数字と単位（10｜ミリ）の間では切らない
     pen[n] = 0.0
     parts_min = -(-n // max_chars)
     target = n / parts_min
@@ -248,10 +250,73 @@ def split_caption(text: str, max_chars: int) -> list[str]:
     return [p.strip().rstrip("。") for p in parts if p.strip()]
 
 
+_SENTENCE_END = re.compile(r"(ます|です|ました|でした|ません|ますね|ですね|ましょう|でしょう|よね|ますが|ですが|けど|ので|たら|から)$")
+_COUNTERS = "点円個本枚回年日分秒倍位人台歳度種"
+MEND_GAP = 2.0   # これより間が空いていれば、別々の発言として扱う（言葉をつなぎ直さない）
+
+
+def _straddle(a: str, b: str) -> tuple[int, int]:
+    """a の終わりと b の頭が1つの言葉になっているとき、(a 側の字数, b 側の字数) を返す。切れ目として自然なら (0, 0)"""
+    if not a or not b or a[-1] in _PUNCT or b[0] in _PUNCT or _SENTENCE_END.search(a):
+        return 0, 0   # 句読点・文の終わり（〜ます／〜です など）のあとは、そこが切れ目
+    joined, n = a + b, len(a)
+    lo = hi = None
+    pos = 0
+    for ph in _phrases(joined):
+        if pos < n < pos + len(ph):
+            lo, hi = pos, pos + len(ph)
+            if min(n - lo, hi - n) >= 3:   # 両側とも長い（「…ブロック」「総合点は…」）→ 別々の言葉。つながない
+                return 0, 0
+            break
+        pos += len(ph)
+    ka, kb = _char_kind(a[-1]), _char_kind(b[0])
+    if lo is None and ka == kb == "K":   # カタカナ語の途中（デザ｜イン）は、文節の判定に関係なくつなぐ
+        lo = hi = n
+        while lo > 0 and _char_kind(joined[lo - 1]) == "K":
+            lo -= 1
+        while hi < len(joined) and (_char_kind(joined[hi]) == "K" or joined[hi] == "ー"):
+            hi += 1
+    if lo is None and ka == "k" and (n < 2 or _char_kind(a[-2]) != "k"):
+        # 前が漢字1字で終わっている（「それと木」「材の…」/「…とか早」「く書きたい」）→ その1字は次の言葉の頭
+        return 1, len(b)
+    if lo is None and a[-1].isdigit() and (kb == "K" or b[0] in _COUNTERS):   # 「重さが30」「グラム」/「総合点は8」「点」
+        k = n
+        while k > 0 and (a[k - 1].isdigit() or a[k - 1] in ".,"):
+            k -= 1
+        return n - k, len(b)
+    if lo is None:
+        return 0, 0
+    return n - lo, hi - n
+
+
+def mend_items(items: list[tuple[float, float, str]], max_gap: float = MEND_GAP) -> list[tuple[float, float, str]]:
+    """文字起こしが言葉の途中で区切った所（「…にある工」「房となっています」）を、言葉がつながるように直す。
+
+    区切りをまたいでいる言葉の、短い方のかけらを隣へ移す。数は変えない（文字が全部移った発言は、文が空になる）。
+    もう一度かけても変わらない。
+    """
+    out = [(s, e, str(t).strip()) for s, e, t in items]
+    for i in range(len(out) - 1):
+        (s1, e1, a), (s2, e2, b) = out[i], out[i + 1]
+        if not a or not b or s2 - e1 > max_gap or a == b:
+            continue
+        left, right = _straddle(a, b)
+        if not left and not right:
+            continue
+        if right < left and right < len(b):   # 次の頭のかけらを、前へ（「黒柿」「とかチューリップ」→「黒柿とか」）
+            a, b = a + b[:right], b[right:]
+        elif left >= len(a):                  # 前が丸ごと言葉のかけら（「シ」「タンと…」）→ 次へまとめて、前は空にする
+            a, b, s2 = "", a + b, s1
+        else:                                 # 前の終わりのかけらを、次へ（「…にある工」「房と…」→「工房と…」）
+            a, b = a[:-left], a[-left:] + b
+        out[i], out[i + 1] = (s1, e1, a.strip()), (s2, e2, b.strip())
+    return out
+
+
 def build_captions(items: list[tuple[float, float, str]], max_chars: int) -> list[tuple[float, float, str]]:
     """(開始, 終了, 文) の一覧を、読みやすい長さに分割した字幕にする。"""
     out = []
-    for s, e, text in items:
+    for s, e, text in mend_items(items):
         parts = split_caption(text, max_chars)
         total = sum(len(p) for p in parts) or 1
         t = s

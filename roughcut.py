@@ -23,7 +23,7 @@ if sys.platform == "win32":
 import rc_win  # noqa: F401  (Windowsでコンソール画面を出さない)
 import rc_chapters
 import rc_llm
-from rc_export import build_captions, write_srt, write_xmeml
+from rc_export import build_captions, mend_items, write_srt, write_xmeml
 from rc_media import SourceSet, probe, require_ffmpeg
 from rc_timeline import PRESETS, Timeline, compute_keep
 from rc_transcribe import Chunk, fmt_ts, is_filler_only, make_chunks, save_chunks, transcribe
@@ -203,6 +203,7 @@ def main():
         for s, e in tl.map_range(c.start, c.end):
             items.append((s, e, text))
             item_ids.append(c.id)
+    items = mend_items(items)   # 言葉の途中で区切られた所をつなぎ直す
     caps = build_captions(items, args.caption_chars)
     if (out / "speakers.json").exists():
         import rc_speakers   # 話者名を字幕に入れる設定のときだけ、名前を付ける

@@ -12,19 +12,25 @@ from pathlib import Path
 LINES_FILE = "meta_lines.json"   # claude.ai 用のプロンプトを作ったときの「行番号 → 発言ID」
 
 
-def build_lines(items: list[tuple[float, float, str]], item_ids: list[int], gap: float = 10.0):
+def build_lines(items: list[tuple[float, float, str]], item_ids: list[int], gap: float = 10.0, pause: float = 0.8):
     """編集後の字幕 (開始, 終了, 文字) を、10秒ごとくらいに1行にまとめる。
+
+    話の間（pause 秒以上）が空いた所でも行を変える。章はその行の先頭の発言から始まるので、
+    前の話題の最後の一言と次の話題が同じ行に入ると、章が早く始まってしまうため。
 
     戻り値: (meta_items=[(開始, 文字)], line_ids=[その行の先頭の発言ID])
     """
-    meta_items, line_ids, prev = [], [], -999.0
-    for (s, _e, t), cid in zip(items, item_ids):
-        if meta_items and s - prev < gap:
+    meta_items, line_ids, prev, last_end = [], [], -999.0, -999.0
+    for (s, e, t), cid in zip(items, item_ids):
+        if not str(t).strip():
+            continue
+        if meta_items and s - prev < gap and s - last_end < pause:
             meta_items[-1] = (meta_items[-1][0], meta_items[-1][1] + " " + t)
         else:
             meta_items.append((s, t))
             line_ids.append(cid)
             prev = s
+        last_end = e
     return meta_items, line_ids
 
 
